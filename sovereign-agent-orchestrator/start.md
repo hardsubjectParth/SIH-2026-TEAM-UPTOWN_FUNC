@@ -188,6 +188,27 @@ the pipeline jumps straight to its completed state. To actually watch it
 advance stage by stage, run with `MODEL_MODE=ollama` — the first prompt will
 also sit on *Model Selection* for a while as the 27B loads into memory.
 
+### Attaching an image
+
+Attaching an image routes the job to `qwen3-vl:8b` whatever the prompt says —
+a question about a picture rarely names anything visual ("give the dimensions
+for this"), so the attachment decides, not the wording. The Model Selection
+stage shows `capability: vision` with the reason. The image itself is sent to
+the model, so it is read directly rather than through whatever OCR indexed.
+
+Two things to expect on a first run:
+
+- Swapping between the 27B and the 8B vision model costs a reload each way.
+  `OLLAMA_MAX_LOADED_MODELS=1` (step 1) means only one stays resident, which is
+  the right trade on 32 GB but makes an alternating text/image conversation
+  slow. Measured: ~160s for a dimensioned engineering drawing once loaded.
+- Uploading an image whose text Tesseract cannot read triggers a vision-OCR
+  pass during ingest, and ingest is synchronous — the upload request blocks on
+  it, bounded by `OCR_VISION_TIMEOUT_SECONDS` (default 180). A dense drawing
+  measured at 393s, so it will sometimes hit that ceiling; the file is then
+  indexed as having no readable text rather than as OCR noise, and questions
+  about it are still answered from the attached image.
+
 ## Stopping everything
 
 ```bash

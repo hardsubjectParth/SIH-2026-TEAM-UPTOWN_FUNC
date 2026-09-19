@@ -385,9 +385,21 @@ The platform is designed to work with:
 * Spreadsheets
 * Mixed-format documents
 
-OCR and multimodal models can be used when information cannot be obtained directly from document text.
+Where text cannot be read from a document directly, the platform falls back through
+progressively stronger local methods: embedded text, then Tesseract OCR, then the local
+vision model when Tesseract returns nothing usable. Nothing in that chain leaves the
+machine.
 
-This is particularly relevant for legacy documents and scanned industrial records.
+Retrieval is only half of it. An image attached to a task is also passed **directly** to
+the vision model at question time, independently of whatever text was indexed for it.
+This matters for exactly the records this problem statement is about: an engineering
+drawing OCRs to noise, so a system that reads only the OCR text will report that it
+cannot find any dimensions while the dimensions sit visibly on the page. Attaching the
+drawing routes the job to the vision model regardless of how the question is worded,
+because a question about a picture rarely names anything visual.
+
+This is particularly relevant for legacy documents, P&IDs and scanned industrial
+records.
 
 ---
 
@@ -775,12 +787,15 @@ SIH-2026-TEAM-UPTOWN_FUNC/
 │   │   └── Backup, restore and load-test utilities
 │   │
 │   ├── tests/
-│   │   └── 37 automated tests
+│   │   └── 46 automated tests
 │   │
-│   ├── ARCHITECTURE.md
-│   ├── SYSTEM_GUIDE.md
+│   ├── README.md              Operational guide: install, configure, run
+│   ├── SYSTEM_GUIDE.md        Architecture, security, deployment reference
+│   ├── ARCHITECTURE.md        Runtime map and security invariants
+│   ├── start.md               Manual runbook for the full local stack
 │   ├── TEAM_SETUP.md
-│   ├── ELECTRON_INTEGRATION.md
+│   ├── PODMAN_SINGLE_CONTAINER.md
+│   ├── .env.example           Every environment variable the code reads
 │   ├── Dockerfile
 │   ├── Containerfile
 │   ├── docker-compose.yml

@@ -61,24 +61,31 @@ MODELS_DIR=~/sovereign-agent/models ./scripts/ollama_setup.sh
 
 This registers `sov-local`, `sov-vision`, `sov-coder` and pulls `nomic-embed-text`.
 
-**B. From the Ollama registry** (edit `config/models.yaml` `model:` fields to match):
+**B. From the Ollama registry** -- these are the models `config/models.yaml` already
+names, so nothing needs editing:
 
-```powershell
-ollama pull qwen2.5vl:3b
-ollama pull qwen2.5-coder:7b
-ollama pull nomic-embed-text
+```bash
+ollama pull qwen3.6:27b   # reasoner + coder + calc + docs + general (~17 GB)
+ollama pull qwen3-vl:8b   # vision: scans, drawings, screenshots (~6 GB)
+ollama pull bge-m3        # embeddings, multilingual (~1.2 GB)
 ```
 
-Use these settings in `.env`:
+Settings in `.env` for option B (this is what `.env.example` ships):
 
 ```text
 MODEL_MODE=ollama
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=sov-local
-OLLAMA_EMBEDDING_MODEL=nomic-embed-text
-OLLAMA_VISION_MODEL=sov-vision
+OLLAMA_MODEL=qwen3.6:27b
+OLLAMA_EMBEDDING_MODEL=bge-m3
+OLLAMA_VISION_MODEL=qwen3-vl:8b
+RAG_EMBEDDING_DIMENSIONS=1024
 LLM_ENABLE_THINKING=false
 ```
+
+For option A instead, set `OLLAMA_MODEL=sov-local`, `OLLAMA_VISION_MODEL=sov-vision`,
+`OLLAMA_EMBEDDING_MODEL=nomic-embed-text` and `RAG_EMBEDDING_DIMENSIONS=768`, and point
+the `model:` fields in `config/models.yaml` at the `sov-*` names. The embedding
+dimension must match the embedder or PostgreSQL rejects the vectors.
 
 ## Shared PostgreSQL/pgvector setup
 
@@ -92,15 +99,27 @@ The PostgreSQL data volume is local to that machine. Do not put volume contents 
 
 ## Authentication and tenant testing
 
-```powershell
-$headers = @{
-  Authorization = 'Bearer local-development-key'
-  'X-Tenant-ID' = 'company-a'
-}
-Invoke-RestMethod -Headers $headers -Uri 'http://localhost:8080/api/v1/ready'
+Get a token from the dev-login endpoint (needs `DEV_AUTH_ENABLED=true` and a
+`JWT_SECRET` of at least 32 characters):
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/dev/login \
+  -H 'content-type: application/json' \
+  -d '{"username":"Admin","password":"'"$DEV_ADMIN_PASSWORD"'"}' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/ready
 ```
 
-Use different tenant headers to verify that jobs and indexed evidence remain isolated. In production, replace the shared API key with OIDC/JWT or mTLS.
+The accounts are `Admin`, `Higher` and `Lower`, matching the three access tiers. Log in
+as each and confirm a document uploaded by Admin is invisible to Lower -- that is the
+isolation check that matters. Use different `X-Tenant-Id` values to verify tenant
+separation on top of it. In production, tokens come from OIDC/JWT instead.
+
+> Be careful with `DATABASE_URL`: the three tier variables fall back to it when unset,
+> so setting it alone collapses the control plane and all three tiers into one database
+> and every tier can read everything. Leave all four unset for local SQLite, or set all
+> four. See `.env.example`.
 
 ## Git workflow
 
@@ -117,7 +136,7 @@ git push -u origin feat/document-ingestion
 
 Open a pull request and require review plus passing CI before merging. Review the staged diff for secrets, databases, uploads, and generated artifacts.
 
-Suggested ownership: API/auth and tenant isolation, SQLAlchemy/migrations/pgvector, extraction/OCR/embeddings, orchestration/policy/tools, Electron, and deployment/secrets/backups should each have a named owner.
+Suggested ownership: API/auth and tier isolation, SQLAlchemy/migrations/pgvector, extraction/OCR/embeddings, orchestration/policy/tools, the `frontend/` dashboard, and deployment/secrets/backups should each have a named owner.
 
 ## CI minimum
 
@@ -129,18 +148,15 @@ python -m compileall app cli.py
 
 Integration CI should start PostgreSQL with pgvector, apply `migrations/tier/001_initial_pgvector.sql` and `migrations/core/001_operational.sql`, upload test fixtures, and verify tenant filtering, citation validation, queue recovery, and artifact download.
 
-## Sharing this current checkout
+## Remotes
 
-This checkout currently has local changes and no configured remote. Review the staged diff before committing:
+The repository has two:
 
-```powershell
-git status --short
-git remote -v
-git add .
-git diff --cached --stat
-git commit -m "Add offline RAG and production persistence"
-git remote add origin <PRIVATE_REPOSITORY_URL>
-git push -u origin main
+```text
+origin      the team's working repository
+submission  the repository the SIH submission is published from
 ```
 
-If the team repository already has a `main` branch, fetch it and push a feature branch for a pull request instead of pushing directly to `main`.
+Work on a feature branch and open a pull request; do not push directly to `main` on
+either remote. Check `git remote -v` and `git status --short` before pushing, and
+review the staged diff for secrets, databases, uploads and generated artifacts.

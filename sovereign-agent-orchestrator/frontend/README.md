@@ -1,433 +1,166 @@
-# Frontend Handoff
+# Frontend
 
-## Sovereign Agent Orchestrator
+The Sovereign Agent Orchestrator dashboard: React + TypeScript + Vite, talking to the
+FastAPI backend over REST and SSE. This is the only client in the repository.
 
-This document summarizes the current frontend work on the `frontend` branch and provides context for continuing frontend/backend integration.
+## Stack
 
----
+React 19, TypeScript, Vite, React Router, Tailwind CSS v4, Framer Motion, Radix UI
+(tabs, dialog), SWR for polling. Dev server on `http://localhost:5173`; the API on
+`http://127.0.0.1:8080`.
 
-## 1. Frontend Stack
-
-* React
-* TypeScript
-* Vite
-* React Router
-* CSS
-* Backend: FastAPI
-
-The frontend currently runs on:
+## Structure
 
 ```text
-http://localhost:5173
+frontend/src/
+├── components/
+│   ├── Login.tsx                 Dev-login form (Admin / Higher / Lower)
+│   ├── ProtectedRoute.tsx        Redirects unauthenticated users to /login
+│   ├── shell/
+│   │   ├── Shell.tsx             App frame around every /app route
+│   │   ├── Sidebar.tsx           Navigation and session/role display
+│   │   ├── icons.tsx             Inline SVG icon set
+│   │   └── rank.ts               Role → display rank helpers
+│   ├── feed/
+│   │   ├── Composer.tsx          Prompt input and attachment picker
+│   │   ├── ProtocolPipeline.tsx  Live six-stage run readout, driven by job events
+│   │   ├── ActivityTimeline.tsx  Raw event log (collapsed under the pipeline)
+│   │   ├── ApprovalGate.tsx      Approve/reject UI for awaiting_approval jobs
+│   │   ├── ArtifactsRail.tsx     Artifacts produced by the current turn
+│   │   └── MetricsCard.tsx       Per-run counters
+│   ├── knowledge/
+│   │   └── IngestPanel.tsx       Upload with a server-provided scope selector
+│   └── shared/                   StatCard, StatusDot, StatusPill, TierLabel, …
+├── pages/
+│   ├── IntelligenceFeedPage.tsx  Conversation view; the main workspace
+│   ├── AgentTasksPage.tsx        Job list
+│   ├── KnowledgeBasePage.tsx     Indexed-document search and file listing
+│   ├── IngestKnowledgePage.tsx   Upload and index documents
+│   └── ArtifactsPage.tsx         Generated artifacts, with download
+├── hooks/                        useConversations, useJob, useFiles,
+│                                 useKnowledgeSearch, useSystem
+├── context/AuthContext.tsx       Session token and user, persisted
+├── services/api.ts               The single place that talks to the API
+├── types/api.ts                  Response contracts
+├── App.tsx                       Routes and motion config
+└── index.css                     Design tokens and base styles
 ```
 
-The backend runs on:
+## Routing
 
 ```text
-http://127.0.0.1:8080
+/                        → redirect to /app/feed
+/login                   Dev login
+/app/feed                Intelligence Feed (new conversation)
+/app/feed/:id            Intelligence Feed (existing conversation)
+/app/tasks               Agent Tasks
+/app/knowledge           Knowledge Base
+/app/knowledge/ingest    Ingest
+/app/artifacts           Artifacts
 ```
 
----
+Unknown paths redirect to `/app/feed`. Every `/app/*` route renders inside `Shell`.
 
-## 2. Current Frontend Structure
+## Authentication
 
-The main frontend is located in:
+Authentication is real, not mocked. `AuthContext` calls `devLogin()` in
+`services/api.ts`, which posts to `POST /api/v1/auth/dev/login` and stores the returned
+JWT and user. Every subsequent request sends `Authorization: Bearer <token>`.
+
+The three accounts — `Admin`, `Higher`, `Lower` — correspond to the backend's three
+access tiers, and their passwords are the `DEV_*_PASSWORD` values in the backend `.env`.
+This endpoint only exists while `DEV_AUTH_ENABLED=true`; a production deployment gets
+its tokens from an OIDC provider instead, and only `AuthContext` and `api.ts` would
+change.
+
+## Backend connection
+
+`services/api.ts` is the only module that performs network calls. Its base URL comes
+from `VITE_API_BASE_URL` (see `frontend/.env`), defaulting to
+`http://127.0.0.1:8080/api/v1`.
+
+Endpoints in use:
 
 ```text
-frontend/
-└── src/
-    ├── components/
-    │   ├── Artifacts.tsx
-    │   ├── KnowledgeBase.tsx
-    │   ├── Login.tsx
-    │   ├── MainContent.tsx
-    │   ├── NewTask.tsx
-    │   ├── ProtectedRoute.tsx
-    │   ├── RecentArtifacts.tsx
-    │   ├── RecentTasks.tsx
-    │   ├── Sidebar.tsx
-    │   └── Tasks.tsx
-    │
-    ├── context/
-    │   └── AuthContext.tsx
-    │
-    ├── services/
-    │   └── api.ts
-    │
-    ├── App.tsx
-    ├── main.tsx
-    └── index.css
+POST   /auth/dev/login                       obtain a session token
+GET    /health  /ready                       status and model readiness
+GET    /files          POST /files           list and upload documents
+GET    /files/scopes                         tiers this role may upload into
+DELETE /files/{id}                           remove a document
+POST   /knowledge/search                     search the readable tiers
+GET    /conversations  POST /conversations   threads
+GET    /conversations/{id}/messages          history
+POST   /chat                                 submit a prompt, returns a job_id
+GET    /agent                                job list
+GET    /agent/{job_id}                       job detail
+GET    /agent/{job_id}/events                SSE progress stream
+POST   /agent/{job_id}/approve  /cancel      approval and cancellation
+GET    /agent/{job_id}/artifacts             list and download artifacts
 ```
 
----
+The upload scope selector is populated from `GET /files/scopes` — the browser never
+chooses a database tier. The API validates the JWT, derives the role, and routes each
+upload and query server-side.
 
-## 3. Routing
+## Architecture rule
 
-React Router is currently configured with:
+The frontend talks to the FastAPI API and nothing else. It must never reach a model, a
+model router, RAG, PostgreSQL, an agent tool or the sandbox directly, and it never sees
+host filesystem paths — artifacts are fetched through the artifact endpoint.
 
 ```text
-/login
-/dashboard
-/new-task
-/tasks
-/knowledge
-/artifacts
-```
-
-The root route redirects to `/login`.
-
-The dashboard and other application pages are currently protected using `ProtectedRoute`.
-
----
-
-## 4. Authentication
-
-Authentication is currently **mocked on the frontend**.
-
-`AuthContext.tsx` currently maintains:
-
-```text
-isLoggedIn
-login()
-logout()
-```
-
-The login form does not yet communicate with the backend.
-
-### TODO
-
-Replace the temporary authentication with the real authentication system once the backend/auth implementation is ready.
-
-The temporary `Logged in: Yes/No` text in the login page should also be removed.
-
----
-
-## 5. Current Pages
-
-### Login
-
-Basic login UI containing:
-
-* Username field
-* Password field
-* Login button
-
-Currently uses the temporary `AuthContext`.
-
-### Dashboard
-
-Contains:
-
-* Welcome message
-* New Task button
-* Recent Tasks
-* Recent Artifacts
-* Backend health check
-
-### New Task
-
-Currently supports:
-
-* Task description
-* Multiple file selection
-* Displaying selected filenames
-* Run Task button
-
-At the moment, Run Task only logs the task and selected files to the browser console.
-
-### Tasks
-
-Currently a placeholder page.
-
-This should eventually display real jobs from the backend.
-
-### Knowledge Base
-
-Currently a placeholder page.
-
-This should eventually use:
-
-```text
-POST /api/v1/knowledge/search
-```
-
-### Artifacts
-
-Currently a placeholder page.
-
-This should eventually display and download artifacts generated by agent jobs.
-
----
-
-## 6. Backend Connection
-
-The frontend API service is currently:
-
-```text
-frontend/src/services/api.ts
-```
-
-The API base URL is:
-
-```text
-http://127.0.0.1:8080/api/v1
-```
-
-A health check is implemented:
-
-```text
-GET /api/v1/health
-```
-
-The frontend has successfully received:
-
-```json
-{
-  "status": "ok"
-}
-```
-
-So the React → FastAPI connection has been verified.
-
----
-
-## 7. Planned API Integration
-
-The backend already exposes the main endpoints needed by the frontend.
-
-### File upload
-
-```text
-POST /api/v1/files
-```
-
-The frontend should upload selected files before starting a task and retain the returned `file_id`.
-
-### Start agent task
-
-```text
-POST /api/v1/agent/run
-```
-
-The request should contain the task and uploaded file IDs.
-
-The backend returns a:
-
-```text
-job_id
-```
-
-### Get task
-
-```text
-GET /api/v1/agent/{job_id}
-```
-
-Used to retrieve the current state of a job.
-
-### Live task events
-
-```text
-GET /api/v1/agent/{job_id}/events
-```
-
-This is an SSE endpoint and should eventually be used for displaying the agent's live progress.
-
-### Knowledge search
-
-```text
-POST /api/v1/knowledge/search
-```
-
-### Artifacts
-
-```text
-GET /api/v1/agent/{job_id}/artifacts
-```
-
-Individual artifacts can be downloaded through the corresponding artifact endpoint.
-
-### Approval
-
-```text
-POST /api/v1/agent/{job_id}/approve
-```
-
-### Cancellation
-
-```text
-POST /api/v1/agent/{job_id}/cancel
-```
-
----
-
-## 8. Important Architecture Rule
-
-The frontend should communicate with the **FastAPI API only**.
-
-The frontend should NOT directly communicate with:
-
-* LLMs
-* Model routers
-* RAG/database
-* PostgreSQL
-* Agent tools
-* Sandbox
-
-The intended flow is:
-
-```text
-React Frontend
-      │
+React frontend
+      │ REST + SSE
       ▼
 FastAPI API
       │
       ▼
 Agent Orchestrator
-      │
-      ├── Model Router / Models
-      ├── RAG
+      ├── Model router / models
+      ├── RAG (per-tier databases)
       ├── Tools
       ├── Policy
       ├── Verification
       └── Storage
 ```
 
----
+## Running it
 
-## 9. Backend Workspace Fix
-
-While testing the backend, the frontend branch encountered a backend import problem.
-
-`main.py` imports:
-
-```python
-from app.workspace.manager import Workspace
-```
-
-The repository's `origin/main` contained the directory as:
-
-```text
-app/Workspace/
-```
-
-The directory was brought into this branch and renamed to:
-
-```text
-app/workspace/
-```
-
-This makes the filesystem path consistent with the Python import and avoids case-sensitivity problems on Linux.
-
-This change has been committed locally.
-
----
-
-## 10. Current State
-
-Completed:
-
-* React + TypeScript + Vite setup
-* React Router setup
-* Application navigation
-* Sidebar
-* Dashboard
-* New Task page
-* Tasks page
-* Knowledge Base page
-* Artifacts page
-* Login page
-* Temporary authentication context
-* Protected routes
-* API service
-* Backend health check
-* Verified React → FastAPI communication
-* Workspace module path fix
-
-Still to implement:
-
-* Real authentication
-* Real database integration
-* File upload API integration
-* Agent task creation
-* Real task list
-* Task details
-* SSE live progress
-* Knowledge Base search
-* Artifact listing/downloads
-* Approval/cancel UI
-* Proper RBAC
-* Production UI styling
-* Error/loading states
-* Responsive layout
-
----
-
-## 11. Running the Project
-
-### Frontend
-
-From the `frontend` directory:
-
-```powershell
+```bash
+cd frontend
 npm install
-npm run dev
+npm run dev          # http://localhost:5173
 ```
 
-Frontend:
+The backend must be running for anything past the login screen.
+[../start.md](../start.md) is the full runbook for the whole local stack; the short
+version, from `sovereign-agent-orchestrator/`:
 
-```text
-http://localhost:5173
+```bash
+set -a; . ./.env; set +a
+.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080
 ```
 
-### Backend
+Build and typecheck:
 
-From the repository root, with the Python virtual environment activated:
-
-```powershell
-uvicorn app.main:app --host 127.0.0.1 --port 8080
+```bash
+npm run build        # tsc -b && vite build
+npm run lint
 ```
 
-Backend:
+## Tier test script
 
-```text
-http://127.0.0.1:8080
-```
+Worth running after any change to upload, search or auth — it is the check that the
+access model still holds end to end.
 
-Health endpoint:
+- **Admin**: upload an admin-scoped file containing a unique phrase. Search it as Admin
+  (must appear); sign out and search as Higher and Lower (must not appear).
+- **Higher**: upload a higher-scoped file with a second unique phrase. Search it as
+  Higher and Admin (must appear); search as Lower (must not appear).
+- **Any role**: upload a lower/everyone-scoped file with a third phrase. Search it as
+  Lower, Higher and Admin (must appear).
+- **Lower**: the scope selector must not offer Higher or Admin options.
 
-```text
-http://127.0.0.1:8080/api/v1/health
-```
-
----
-
-## 12. Branch Information
-
-Current branch:
-
-```text
-frontend
-```
-
-The frontend work is intentionally kept on this branch rather than being merged directly into `main`.
-
-Before making large changes, pull/fetch the latest remote changes and check for conflicts with ongoing backend/frontend work.
-
----
-
-## 13. Running the stitched GUI locally
-
-1. At the repository root, copy `.env.example` to `.env` and replace every placeholder password and `JWT_SECRET` with strong local values. Keep `DEV_AUTH_ENABLED=true` only for this local test environment.
-2. Start the full backend stack: `docker compose up --build`. This starts the control database, three pgvector tier databases, Ollama, API, and worker.
-3. In a second terminal, run `cd frontend`, copy `.env.example` to `.env`, then run `pnpm install` and `pnpm dev`.
-4. Open `http://localhost:5173`, select Admin, Higher employee, or Lower employee, and enter the matching `DEV_*_PASSWORD` from the root `.env`.
-
-### Tier test script
-
-- Admin: upload an admin `private` file containing a unique phrase. Search it as Admin (must appear); sign out and search as Higher and Lower (must not appear).
-- Higher: upload a `restricted` file with a second unique phrase. Search it as Higher and Admin (must appear); search as Lower (must not appear).
-- Any role: upload an `everyone` file with a third phrase. Search it as Lower, Higher, and Admin (must appear).
-- Lower: the scope selector should not expose Higher or Admin options. A Lower account can only search the Lower database.
-
-The GUI obtains its upload scope options from `GET /api/v1/files/scopes`; the browser never selects a database tier. The API verifies the JWT, derives the role, and routes each upload/query server-side.
+Note what this does *not* test, because the backend does not provide it: two users of
+the same tier and tenant can retrieve each other's documents. Tier isolation is the
+guarantee; per-user isolation within a tier is not.

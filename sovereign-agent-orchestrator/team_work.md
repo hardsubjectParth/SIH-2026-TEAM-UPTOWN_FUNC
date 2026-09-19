@@ -7,7 +7,7 @@ This document is the implementation guide for integrating and extending this rep
 The repository is a working local agent runtime with this path:
 
 ```text
-Electron or CLI
+Dashboard (frontend/), CLI, or any REST/SSE client
   -> FastAPI REST/SSE API
   -> Store and per-job Workspace
   -> Orchestrator
@@ -31,7 +31,7 @@ Implemented now:
 - Deterministic task routing into coding / calculation / spreadsheet / presentation / multimodal / document / general.
 - Per-task-type plans and a bounded re-plan loop on verification failure (`MAX_ITERATIONS`, `MAX_TOOL_CALLS`).
 - Per-job workspace with path traversal protection.
-- Tools: `search_documents`, `read_file`, `write_file`, `generate_docx`, `generate_xlsx`, `generate_pptx`, `run_python` (no-network sandbox), `spreadsheet_profile`, `extract_tables`, `ocr_document`, `redact_pii`, `export_report`, `search_db`, `ingest_document`, `list_sources`, `send_email`, `create_calendar_event`.
+- Tools: `search_documents`, `read_file`, `write_file`, `generate_docx`, `generate_xlsx`, `generate_pptx`, `generate_pdf`, `run_python` (no-network sandbox), `spreadsheet_profile`, `extract_tables`, `ocr_document`, `redact_pii`, `export_report`, `search_db`, `ingest_document`, `list_sources`, `send_email`, `create_calendar_event`.
 - Deterministic policy checks; `code_executed` verification check for coding tasks.
 - Verification before artifact delivery.
 - Approval pause/resume; the CLI wires `TieredRagService` and the model adapter and drives the approval gate through `requested_role`.
@@ -41,8 +41,8 @@ Not complete yet:
 - PostgreSQL/SQLAlchemy persistence and pgvector migration support are implemented; run the migrations before using the production URL.
 - Handwriting OCR remains model-dependent and needs company-document accuracy evaluation.
 - A free-form model-driven tool-calling loop (plans are deterministic per task type; re-planning is bounded).
-- A real Electron client. The Electron file is a contract/specification only.
-- Production authentication, authorization, rate limits, and multi-process job execution.
+- A desktop shell. The React dashboard in `frontend/` is the working client; `ELECTRON_INTEGRATION.md` describes a desktop wrapper that was never built.
+- Multi-process job execution at scale. Authentication (JWT/OIDC), tier-based authorization, rate limits, storage quotas and optional ClamAV scanning are implemented.
 - Real-model (Ollama) exercise of the per-task model swaps under target hardware.
 
 Treat this distinction as important when planning integration work.
@@ -164,8 +164,8 @@ Add an entry with a stable logical ID:
 models:
   - id: qwen-local
     provider: ollama
-    model: qwen2.5vl:3b
-    capabilities: [reasoning, vision, completion, document]
+    model: qwen3.6:27b
+    capabilities: [reasoning, completion, document, coding]
     enabled: true
 
   - id: llama-local
@@ -419,7 +419,7 @@ workspace/{job_id}/
 
 ```mermaid
 flowchart TD
-  Client[Electron or CLI] --> API[FastAPI routes]
+  Client[Dashboard / CLI / any REST+SSE client] --> API[FastAPI routes]
   API --> Store[Store: SQLite JSON jobs/events/approvals]
   API --> WS[Workspace manager]
   API --> Orch[Orchestrator]
@@ -552,7 +552,7 @@ Then implement either:
 - in-process PostgreSQL/pgvector retrieval, or
 - an internal HTTP RAG service accessed through `RAG_URL`.
 
-Expose retrieval to orchestration through a `search_documents` tool, not directly to Electron. Apply tenant, role, clearance, and project filters before returning chunks. Include stable citation IDs in observations so the verifier can validate them.
+Expose retrieval to orchestration through a `search_documents` tool, not directly to the client. Apply tenant, role, clearance, and project filters before returning chunks. Include stable citation IDs in observations so the verifier can validate them.
 
 ### Other database options
 
@@ -564,7 +564,10 @@ Expose retrieval to orchestration through a `search_documents` tool, not directl
 
 ## 8. Electron.js Integration
 
-There is no Electron source tree in this repository. `ELECTRON_INTEGRATION.md` is the intended REST/SSE contract.
+There is no Electron source tree in this repository and none is planned. The working
+client is the React dashboard in `frontend/` (see `frontend/README.md`), which uses
+the same REST/SSE surface. `ELECTRON_INTEGRATION.md` remains as the contract a
+desktop wrapper would implement, and the guidance below applies to any such client.
 
 Recommended Electron layers:
 
@@ -720,13 +723,16 @@ A useful integration definition of done is:
 | Model routing | `app/models/router.py` | Task classification and logical model selection. |
 | Model adapters | `app/models/adapter.py` | Fake and Ollama provider calls. |
 | Policy | `app/policy/engine.py` | Risk tiers and allow/deny/approval decisions. |
-| Tools | `app/tools/registry.py` | Search, file operations, and DOCX generation. |
+| Tools | `app/tools/registry.py` | Search, file operations, and DOCX/XLSX/PPTX/PDF generation. |
+| Sandbox | `app/tools/sandbox.py` | No-network execution of generated Python. |
+| Tier access | `app/access.py`, `app/rag/tiered.py` | Roles and the downward tier read cascade. |
 | Workspace | `app/workspace/manager.py` | Per-job directories and path containment. |
-| Persistence | `app/storage/store.py` | SQLite jobs, events, and approvals. |
+| Persistence | `app/storage/store.py` | Jobs, events, files, approvals, audit and queue. |
 | Verification | `app/verification/verifier.py` | Delivery checks. |
 | Model config | `config/models.yaml` | Enabled logical model registry entries. |
 | Runtime config | `.env.example`, `app/config.py` | Environment variables and defaults. |
-| Electron contract | `ELECTRON_INTEGRATION.md` | Proposed client-facing REST/SSE contract. |
+| Frontend | `frontend/` | The React dashboard; see its README. |
+| Desktop contract | `ELECTRON_INTEGRATION.md` | Contract for a desktop shell that was never built. |
 | Architecture notes | `ARCHITECTURE.md` | Intended lifecycle and extension points. |
-| CLI | `cli.py` | Local command-line entry point; currently needs repair. |
+| CLI | `cli.py` | Local command-line entry point; also `--report` and `--knowledge-transfer`. |
 | Tests | `tests/test_core.py` | Current focused unit tests. |
