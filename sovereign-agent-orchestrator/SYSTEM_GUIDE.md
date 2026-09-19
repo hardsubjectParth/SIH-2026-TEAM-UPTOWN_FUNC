@@ -9,9 +9,11 @@ The system is an offline-capable document AI backend and agent runtime for an or
 - Multi-user conversations with durable history.
 - Private document uploads and explicit document sharing.
 - Text-only, document-only, and text-plus-document queries.
-- Local document extraction for TXT, Markdown, PDF, DOCX, CSV, XLSX, XLSM, and common images.
-- Local OCR and optional local vision transcription, including page-by-page OCR of image-only / scanned PDFs.
-- Tenant, owner, clearance, conversation, and attachment retrieval boundaries.
+- Local document extraction for TXT, Markdown, PDF, DOCX, PPTX, CSV, XLSX, XLSM, and common images.
+- Local OCR and optional local vision transcription, including page-by-page OCR of image-only / scanned PDFs, and a vision fallback when Tesseract returns unusable output.
+- Direct vision reading of images attached to a task, independent of what OCR indexed for them.
+- **Physically isolated RAG tiers**: admin / higher / lower, each its own database, with a downward-only read cascade (section 6A).
+- Tenant, conversation, and attachment retrieval boundaries on top of the tier boundary.
 - PostgreSQL plus pgvector for production; SQLite for development.
 - **A multi-model local backend.** `config/models.yaml` holds several Ollama model
   profiles; a deterministic task router classifies each task and the orchestrator
@@ -40,15 +42,31 @@ UI
   -> authenticated API request
   -> conversation and attachment authorization
   -> document upload/index or existing file lookup
-  -> retrieval scope = owner OR explicit share, plus tenant and clearance
+  -> retrieval scope = the RAG tiers this role may read, filtered by tenant
   -> if attachments exist: retrieval scope = attached file IDs only
+     (attachments are resolved through the file surface, so owner/share applies there)
   -> recent conversation history + retrieved evidence
   -> local Ollama model
   -> structured citations persisted with assistant message
   -> queued job status and SSE events
 ```
 
-A query never receives another user's private documents merely because they share a tenant. A document is retrievable when the caller owns it, has an active explicit share, or is an administrator. Attachment queries are narrower than normal queries and only search the supplied file IDs.
+Two different boundaries operate here and they must not be confused.
+
+**The file surface** (`GET /files`, download, and attaching a file to a job) is
+owner-scoped: a file is reachable when the caller owns it, holds an active unexpired
+share, or is an administrator, all within one tenant.
+
+**RAG retrieval** (`/knowledge/search` and the `search_documents` tool) is *not*
+owner-scoped. Authorization is tier membership: the query runs against the tier
+databases the caller's role may read, filtered by tenant. Everything inside a readable
+tier is, by design, readable by that role — two `lower` users in the same tenant can
+retrieve each other's indexed content. Isolation between users of the same tier is not
+a property this system provides; isolation between tiers is, and it is physical.
+
+Attachment queries are narrower than either: they search only the supplied file IDs,
+and because attachments are resolved through the file surface, owner and share rules do
+apply to what can be attached in the first place.
 
 ## 3. Authentication Headers
 
@@ -65,32 +83,33 @@ OIDC_JWKS_URL=https://identity.example.com/.well-known/jwks.json
 
 For an isolated server without an identity provider, use a long random `JWT_SECRET` for HS256 test tokens. Do not use HS256 for a shared internet-facing deployment.
 
-The local single-identity fallback uses:
+The local single-identity fallback (`AUTH_MODE=api_key`) uses one shared key:
 
 ```text
 Authorization: Bearer $API_KEY
 X-Tenant-Id: engineering
-```
-
-For multiple users, configure `API_USERS_JSON`. Each request then uses:
-
-```text
-Authorization: Bearer user-specific-key
 X-User-Id: alice
+X-User-Role: lower
 ```
 
-Roles, tenant, and clearance are read from the server-side user map, not trusted from request headers.
+Because every caller presents the same key, identity comes from those headers, falling
+back to `API_USER_ID`, `API_ROLE` (default `lower`) and `DEFAULT_TENANT_ID`. That means
+a client can name its own role, so this mode is only appropriate behind a trusted proxy
+that sets the headers, on an isolated server, or for local development. There is no
+server-side user map: use JWT or OIDC for anything multi-user.
 
-Example:
+Roles are `admin`, `higher` and `lower` — they are the RAG tiers (section 6A), not free
+text. An absent or unrecognised role resolves to `lower`, the least privileged; when a
+token carries several, the most privileged wins.
 
-```json
-{
-  "alice": {"api_key":"alice-secret", "tenant_id":"engineering", "role":"user", "clearance":"internal"},
-  "reviewer": {"api_key":"reviewer-secret", "tenant_id":"engineering", "role":"admin", "clearance":"restricted"}
-}
-```
+For local development with the bundled dashboard, `DEV_AUTH_ENABLED=true` exposes
+`POST /api/v1/auth/dev/login`, which issues a short-lived token for the `Admin`,
+`Higher` or `Lower` account against the matching `DEV_*_PASSWORD`. It requires a
+`JWT_SECRET` of at least 32 characters and returns 503 below that. Never enable it on a
+shared or internet-facing host.
 
-For an internet-facing installation, place the API behind an OIDC/JWT gateway or mTLS identity proxy. The local API-key map is intended for an isolated server or trusted internal network.
+For an internet-facing installation, place the API behind an OIDC/JWT gateway or mTLS
+identity proxy.
 
 ## 4. API Contract
 
@@ -114,11 +133,16 @@ GET /models
 ```text
 POST   /files
 GET    /files
+GET    /files/scopes
 DELETE /files/{file_id}
 POST   /files/{file_id}/shares
 GET    /files/{file_id}/shares
 DELETE /files/shares/{share_id}
 ```
+
+`GET /files/scopes` lists the tiers this caller may upload into. `POST /files` accepts
+an optional `scope` form field naming one of them; without it the upload lands in the
+caller's own tier.
 
 Upload example:
 
@@ -186,6 +210,7 @@ The response contains a queued `job_id` and `conversation_id`. The worker persis
 ### Jobs and artifacts
 
 ```text
+GET  /agent
 POST /agent/run
 GET  /agent/{job_id}
 GET  /agent/{job_id}/events
@@ -194,6 +219,9 @@ POST /agent/{job_id}/cancel
 GET  /agent/{job_id}/artifacts
 GET  /agent/{job_id}/artifacts/{artifact_name}
 ```
+
+`GET /agent` lists the caller's recent jobs with status, task type and routed model —
+the job list the dashboard renders.
 
 Jobs and artifacts are owner-scoped. Administrators may access jobs in their tenant.
 
@@ -208,8 +236,9 @@ Every retrieval hit has this shape:
   "source":"inspection.pdf",
   "content":"quoted indexed chunk",
   "score":0.91,
-  "retrieval_method":"pgvector",
-  "metadata":{"file_id":"...","owner_id":"alice","tenant_id":"engineering"}
+  "retrieval_method":"embedding+local_rerank",
+  "tier":"higher",
+  "metadata":{"file_id":"...","owner_id":"alice","tenant_id":"engineering","visibility_tier":"higher"}
 }
 ```
 
@@ -228,12 +257,51 @@ Operational PostgreSQL tables:
 - `messages`: user/assistant history and structured citations.
 - `audit_events`: security and lifecycle actions.
 
-RAG tables:
+RAG tables, created identically in **each** of the three tier databases (section 6A):
 
-- `rag_documents`: checksum, source metadata, owner, tenant, and clearance.
+- `rag_documents`: checksum, source metadata, owner, tenant, and visibility tier.
 - `rag_chunks`: content, embedding, chunk number, and provenance metadata.
 
 PostgreSQL uses pgvector and JSONB indexes. SQLite is a development fallback with in-process scoring.
+
+## 6A. Tiered Access Model
+
+RAG content is split across **three separate databases**, one per tier, configured by
+`ADMIN_DATABASE_URL`, `HIGHER_DATABASE_URL` and `LOWER_DATABASE_URL`. A role reads
+downward only:
+
+| Role | Uploads land in | Can read |
+|---|---|---|
+| `admin` | admin tier | admin, higher, lower |
+| `higher` | higher tier | higher, lower |
+| `lower` | lower tier | lower |
+
+An upload's tier is chosen by the uploader's role, optionally narrowed by a requested
+scope (`resolve_upload_tier` in `app/access.py`); a search fans out across exactly the
+readable tiers and merges by score (`app/rag/tiered.py`). A `lower` caller cannot reach
+admin content because the connection to that database is never opened for them. This is
+the property the design rests on: prompt-level or filter-level access control is not
+access control, and tier membership is the authorization.
+
+> **Do not set `DATABASE_URL` on its own.** The three tier variables fall back to it
+> when unset, so pointing a deployment at PostgreSQL with `DATABASE_URL` alone collapses
+> the control plane and all three tiers into a single database, and every tier can then
+> read every document. `REQUIRE_POSTGRES` does not catch this, because all four *are*
+> PostgreSQL. Either leave all four unset — the default gives four distinct SQLite files,
+> correctly isolated — or set all four explicitly, as `docker-compose.yml` does.
+
+Verify what a configuration actually resolves to before trusting it:
+
+```bash
+set -a; . ./.env; set +a
+.venv/bin/python -c "
+from app.config import settings
+print('control:', settings.database_url)
+for t,u in settings.tier_database_urls.items(): print(f'{t:>7}:', u)
+print('distinct:', len({settings.database_url, *settings.tier_database_urls.values()}))"
+```
+
+Expect `distinct: 4`.
 
 ## 7. Local Model and Auto-Configuration
 
@@ -256,6 +324,11 @@ When `AUTO_CONFIG=true` and `OLLAMA_MODEL` is not explicitly set, the highest qu
 one of: `coding`, `multimodal`, `presentation`, `spreadsheet`, `calculation`,
 `document_workflow`, `general`. Each type maps to a model capability
 (`coding` → coder, `multimodal` → vision, others → reasoner / document model).
+An attached image overrides the capability to `vision` regardless of the task's
+wording -- a question about a picture usually names no visual thing ("give the
+dimensions for this"), so routing on text alone sent drawings to a text-only model.
+The task type, and therefore the plan and the deliverable, still come from the text.
+
 `ModelRouter.route()` returns the chosen registry id **and** model name; the
 orchestrator (`_adapter_for`) then builds and caches a per-model `OllamaAdapter`,
 so the model the router picked is the model that actually runs. If that model is
@@ -286,7 +359,8 @@ The registered tools are local and policy-controlled:
 - `read_file`, `write_file`: job-workspace-only file operations.
 - `ingest_document`, `ocr_document`, `extract_tables`: controlled document processing.
 - `spreadsheet_profile`, `redact_pii`, `export_report`: local data operations.
-- `generate_docx`, `generate_xlsx`, `generate_pptx`: local artifact generation (Word / Excel / PowerPoint).
+- `generate_docx`, `generate_xlsx`, `generate_pptx`, `generate_pdf`: local artifact generation (Word / Excel / PowerPoint / PDF). PDF is produced directly with pymupdf -- no LibreOffice or external converter is involved, and it works air-gapped.
+- `list_sources`: inventory of indexed sources the caller may read.
 - `run_python`: runs one generated `.py` file in a no-network sandbox with CPU,
   memory and file-size caps; returns exit code and captured output. See
   `app/tools/sandbox.py` for the isolation layers.
@@ -294,7 +368,7 @@ The registered tools are local and policy-controlled:
 - `create_calendar_event`: creates an auditable local event artifact.
 - `send_email`: sends through configured SMTP only; returns `SMTP_NOT_CONFIGURED` when unavailable.
 
-High-risk tools require approval. `generate_docx` / `generate_xlsx` / `generate_pptx`
+High-risk tools require approval. `generate_docx` / `generate_xlsx` / `generate_pptx` / `generate_pdf`
 also require approval when the caller's requested role is `approver_demo`. No tool
 is allowed to access arbitrary filesystem paths, reach the network from the code
 sandbox, or execute arbitrary SQL against operational tables.
@@ -346,7 +420,7 @@ curl http://localhost:8080/api/v1/system/capabilities
 
 The compose stack contains:
 
-- `postgres`: PostgreSQL 16 with pgvector and mounted migrations.
+- `postgres`: PostgreSQL 17 with pgvector and mounted migrations, plus one pgvector database per RAG tier.
 - `ollama`: local model server.
 - `ollama-init`: idempotent model installation step.
 - `api`: HTTP/SSE API with no embedded worker.
@@ -429,27 +503,43 @@ POST /api/v1/chat
 }
 ```
 
-Poll the returned job, consume its SSE stream, verify `status=done`, and confirm `citations` and `artifacts` are present. The current artifact generator produces DOCX. PDF output requires a locally installed converter such as LibreOffice/`soffice`; the backend does not claim PDF support when that binary is absent.
+Poll the returned job, consume its SSE stream, verify `status=done`, and confirm `citations` and `artifacts` are present. Artifact generation covers DOCX, XLSX, PPTX and PDF. PDF is written directly by `generate_pdf` using pymupdf, so it needs no LibreOffice, no `soffice` and no network.
 
 ## 11. Repository Layout
 
 ```text
 app/
   api/routes.py              HTTP API and SSE
-  auth.py                    local identity adapter
-  config.py                  environment settings
+  access.py                  roles and the downward tier read cascade
+  auth.py                    JWT / OIDC / API-key identity and role resolution
+  dev_auth.py                local dev login (DEV_AUTH_ENABLED only)
+  config.py                  environment settings, including the tier database URLs
   diagnostics.py             startup hardware/readiness checks
+  network.py                 egress status surface
+  operations.py              rate limiting, storage quotas, malware scanning
+  queue.py                   durable database-backed job queue
   main.py                    application composition
   worker.py                  dedicated queue worker
+  audit/                     audit event helpers
   models/                    model adapters and routing
   orchestrator/              workflow and citation assembly
-  rag/                       extraction, chunking, embedding, retrieval
+  policy/                    allow / deny / require-approval engine
+  rag/service.py             extraction, chunking, embedding, retrieval
+  rag/tiered.py              per-tier services and the cross-tier read cascade
+  rag/report.py              workbook and knowledge-transfer reports
   schemas/                   API contracts
   storage/                   SQL persistence and authorization queries
-  tools/                     policy-controlled local tools
-  Workspace/                 per-job filesystem boundary
+  tools/registry.py          policy-controlled local tools
+  tools/sandbox.py           no-network sandbox for generated Python
+  verification/              completion and artifact verification
+  workspace/                 per-job filesystem boundary
 config/models.yaml           model profiles and auto-configuration data
+config/tools.yaml            reviewed tool catalog
+frontend/                    Vite + React dashboard
 migrations/                  PostgreSQL and pgvector bootstrap SQL
+tests/                       core, routing, RAG and tiered-access tests
+start.md                     manual start-up runbook for the full local stack
+README.md                    operational guide: install, configure, run, integrate
 SYSTEM_GUIDE.md              authoritative system/API/deployment guide
 ```
 
@@ -466,6 +556,8 @@ queued -> planning -> acting -> observing -> verifying -> delivering -> done
                                              failed
 ```
 
+A job cancelled through `POST /agent/{job_id}/cancel` ends in `cancelled`.
+
 Approval-required tools pause at `awaiting_approval`. The approval endpoint resumes
 or rejects the pending action. When verification fails and iterations remain, the
 job returns to `planning` with the failed checks fed back to the model (a
@@ -476,9 +568,10 @@ transition is persisted as an event and is available through SSE.
 
 - The model never makes authorization decisions.
 - JWT/OIDC claims determine identity, tenant, role, and clearance in production mode.
-- Retrieval is restricted to owned or explicitly shared documents.
+- RAG retrieval is restricted to the tier databases the caller's role may read; it is not owner-scoped, and users sharing a tier and tenant can retrieve each other's indexed content.
+- The file surface -- listing, download, and attaching a file to a job -- *is* owner-scoped: owner, active share, or administrator, within one tenant.
 - Attached-document queries are restricted to the supplied file IDs.
-- Expired and revoked shares are excluded.
+- Expired and revoked shares are excluded from the file surface.
 - Unknown tools are denied by policy.
 - Filesystem paths are canonicalized under the job workspace.
 - SQL access is read-only and limited to RAG tables.
@@ -509,7 +602,8 @@ Use `conversation_id` to continue a thread. Use `attachments[].file_id` to force
 | `ingest_document`, `ocr_document` | Indexing and OCR | Supported types and quotas |
 | `extract_tables`, `spreadsheet_profile` | Structured documents | Local files only |
 | `redact_pii` | Email/phone redaction | Writes to workspace |
-| `export_report`, `generate_docx`, `generate_xlsx`, `generate_pptx` | Word/Excel/PowerPoint artifacts | Output workspace only |
+| `export_report`, `generate_docx`, `generate_xlsx`, `generate_pptx`, `generate_pdf` | Word/Excel/PowerPoint/PDF artifacts | Output workspace only |
+| `list_sources` | Indexed source inventory | Readable tiers only |
 | `run_python` | Execute generated Python | No-network sandbox, CPU/mem/file caps |
 | `search_db` | RAG inspection | SELECT/WITH and RAG tables only |
 | `send_email` | SMTP delivery | Requires SMTP and approval |
@@ -522,7 +616,7 @@ The following have been verified locally:
 - Three-document upload and indexing.
 - Tenant-scoped search and structured citations.
 - Conversation history and attached-document chat.
-- DOCX / XLSX / PPTX artifact generation and complete pipeline delivery.
+- DOCX / XLSX / PPTX / PDF artifact generation and complete pipeline delivery.
 - Task routing across coding / calculation / spreadsheet / presentation / multimodal
   / document / general, each served by its capability-matched model profile.
 - Coding workflow: fenced code written to source files, Python run in the
@@ -535,14 +629,15 @@ The following have been verified locally:
 - Local reranking and retrieval evaluation metrics.
 - 100-request API load test at concurrency 20 against the fake-model API.
 - PostgreSQL custom-format backup, destructive drop, restore, and row verification.
-- 28 automated tests passing.
+- Tier isolation: a lower-tier role cannot retrieve admin-tier content.
+- Attached images read directly by the vision model, including dimensioned engineering drawings.
+- 46 automated tests passing.
 
 The following require environment-specific verification:
 
 - Real OIDC provider and JWKS rotation.
 - Real Ollama generation under target hardware load, including per-task model swaps.
 - ClamAV fail-closed scanning.
-- PDF conversion through LibreOffice or another installed converter.
 - Multi-replica rate limiting with Redis/PostgreSQL coordination.
 - TLS, secret rotation, alerting, and backup retention policy.
 
