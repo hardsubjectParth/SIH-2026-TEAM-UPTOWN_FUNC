@@ -10,6 +10,13 @@ class ModelAdapter(Protocol):
         ...
 
 
+# Ollama only strips reasoning into the `thinking` field when `think` is enabled and
+# the model supports it. Qwen3-VL ignores `think: false` and emits the tags inline
+# instead, so the raw chain of thought lands in `content` and was shown to the user
+# as the answer. Strip it here rather than per-caller.
+_THINK_BLOCK = re.compile(r'<think>.*?</think>', re.S | re.I)
+_THINK_OPEN = re.compile(r'<think>', re.I)
+
 _CODE_HINT = re.compile(r'\b(cod(?:e|ing)|python|function|script|program|implement|algorithm|unit test)\b', re.I)
 _CALC_HINT = re.compile(r'\b(calculat|comput|estimat|sizing|how many|what is the|convert)\b', re.I)
 
@@ -122,4 +129,16 @@ class OllamaAdapter:
         message = r.json().get('message', {})
         if not (message.get('content') or '').strip() and message.get('thinking'):
             message['content'] = message['thinking']
+        message['content'] = _strip_reasoning(message.get('content') or '')
         return message
+
+
+def _strip_reasoning(content):
+    """Drop inline <think> reasoning, keeping the answer that follows it.
+
+    An unterminated block means the model ran out of budget mid-thought and never
+    reached an answer. There is no answer to keep, so the reasoning itself becomes
+    the content -- it is the only thing the model actually produced -- but the
+    stray tag goes, so it is never rendered as markup.
+    """
+    return _THINK_OPEN.sub('', _THINK_BLOCK.sub('', content)).strip()

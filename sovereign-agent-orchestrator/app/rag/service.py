@@ -26,6 +26,22 @@ def _display_name(path, metadata=None):
     return (metadata or {}).get('source_name') or _UPLOAD_PREFIX.sub('', Path(path).name)
 
 
+def _no_text_marker(name):
+    """What to index when an image yields no readable text.
+
+    Indexing the OCR noise instead was actively harmful: it is what retrieval
+    returned as the file's evidence, and the model then reported the document as
+    unreadable garbage rather than answering. A file with no extractable text is
+    still answerable -- the orchestrator attaches the image itself to the task --
+    so say that plainly and let the vision pass at question time do the work.
+    """
+    return (
+        f'[{name}: image with no machine-readable text layer. Nothing could be transcribed by OCR. '
+        'Any question about this file must be answered from the image itself, which is attached to '
+        'the task, not from this entry.]'
+    )
+
+
 class RagService:
     """Local document index with durable chunks and Ollama embeddings."""
 
@@ -45,6 +61,23 @@ class RagService:
         # Set OCR_PREFER_VISION=true to send images / scanned PDFs straight to the
         # local vision model instead (much better transcription, slower).
         self.prefer_vision = os.getenv('OCR_PREFER_VISION', 'false').lower() in {'1', 'true', 'yes'}
+        # Ingest is synchronous -- an upload waits on this -- so the vision pass gets a
+        # bounded budget rather than the caller's patience. A dense engineering drawing
+        # measured at 393s on an 8B vision model here, so this will not always finish;
+        # when it doesn't, ingest() falls back to an honest marker instead of noise.
+        self.vision_timeout = int(os.getenv('OCR_VISION_TIMEOUT_SECONDS', '180'))
+        # Qwen3-VL is a thinking model and, measured here, ignores `think: false` on
+        # this path -- it produced 2,937 characters of chain-of-thought anyway. It is
+        # still sent for models that do honour it, but the transcription budget has to
+        # assume thinking happens: capped at 1024 the reasoning consumed the entire
+        # allowance and the call returned empty content. The budget below leaves room
+        # for the answer after the thinking, and _vision_chat salvages the reasoning
+        # text if a cap is still hit. The temperature is deliberately not lower: at 0.3
+        # this model fell into a repetition loop on a dense drawing and never escaped.
+        self._vision_options = {
+            'think': False,
+            'options': {'num_ctx': int(os.getenv('OLLAMA_NUM_CTX', '8192')), 'num_predict': 4096, 'temperature': 0.4},
+        }
         metadata_type = 'JSONB' if self.is_postgres else 'TEXT'
         embedding_type = f'vector({embedding_dimensions})' if self.is_postgres else 'TEXT'
         if self.is_postgres:
@@ -116,6 +149,23 @@ class RagService:
             return self._ocr(path)
         raise ValueError(f'UNSUPPORTED_DOCUMENT_TYPE: {suffix}')
 
+    # Tesseract on a photo or an engineering drawing frequently returns neither an
+    # error nor text -- it returns noise ('Y i , 7 "Y0DO us snd *juoaf') or a couple
+    # of stray words. That was indexed as the document's entire content, so every
+    # later answer about the image was reasoned from nonsense. Treat an unusable
+    # pass the same as a failed one and let the local vision model transcribe it.
+    _WORD = re.compile(r'[A-Za-z]{3,}')
+
+    @classmethod
+    def _ocr_is_unusable(cls, extracted):
+        if not extracted or extracted.startswith('[OCR unavailable:'):
+            return True
+        if len(re.sub(r'\s+', '', extracted)) < 24:
+            return True
+        tokens = extracted.split()
+        words = [t for t in tokens if cls._WORD.fullmatch(t.strip('.,:;!?()[]{}<>"\'`*|/\\-_=+$#@~^&%'))]
+        return len(words) < max(3, len(tokens) * 0.4)
+
     @staticmethod
     def _ocr(path):
         try:
@@ -155,12 +205,10 @@ class RagService:
         try:
             import base64 as _b64
             pages = []
-            async with httpx.AsyncClient(timeout=180) as client:
+            async with httpx.AsyncClient(timeout=self.vision_timeout) as client:
                 for number, png in self._pdf_page_images(path):
-                    payload = {'model': self.vision_model, 'stream': False, 'keep_alive': self.keep_alive, 'messages': [{'role': 'user', 'content': 'Transcribe all visible text exactly, including handwritten text where legible. Return only the transcription.', 'images': [_b64.b64encode(png).decode('ascii')]}]}
-                    response = await client.post(self.vision_url, json=payload)
-                    response.raise_for_status()
-                    pages.append(f"[Page {number}]\n{response.json()['message']['content']}")
+                    payload = {'model': self.vision_model, 'stream': False, 'keep_alive': self.keep_alive, **self._vision_options, 'messages': [{'role': 'user', 'content': 'Transcribe all visible text exactly, including handwritten text where legible. Return only the transcription.', 'images': [_b64.b64encode(png).decode('ascii')]}]}
+                    pages.append(f'[Page {number}]\n' + await self._vision_chat(client, payload))
             return '\n'.join(pages)
         except Exception as exc:
             return f'[OCR unavailable: install Tesseract or configure Ollama vision: {exc}]'
@@ -206,8 +254,12 @@ class RagService:
             extracted_text = await self._vision_extract_pdf(path)
         else:
             extracted_text = self.extract(path)
-            if is_image and extracted_text.startswith('[OCR unavailable:'):
-                extracted_text = await self._vision_extract(path)
+            if is_image and self._ocr_is_unusable(extracted_text):
+                vision_text = await self._vision_extract(path)
+                extracted_text = (
+                    vision_text if not self._ocr_is_unusable(vision_text)
+                    else _no_text_marker(_display_name(path, metadata))
+                )
             elif suffix == '.pdf' and ('[OCR unavailable:' in extracted_text or len(re.sub(r'\s+', '', extracted_text)) < 24):
                 vision_text = await self._vision_extract_pdf(path)
                 if len(re.sub(r'\s+', '', vision_text)) > len(re.sub(r'\s+', '', extracted_text)):
@@ -243,14 +295,26 @@ class RagService:
                 db.execute(text('INSERT INTO rag_chunks(id,document_id,chunk_index,content,embedding,metadata) VALUES(:id,:document,:index,:content,NULL,' + ('CAST(:metadata AS JSONB)' if self.is_postgres else ':metadata') + ')'), {'id': str(uuid.uuid4()), 'document': document_id, 'index': index, 'content': chunk, 'metadata': json.dumps(metadata)})
         return {'document_id': document_id, 'name': _display_name(path, metadata), 'chunks': len(chunks), 'embedded': 0}
 
+    async def _vision_chat(self, client, payload):
+        """POST one vision request, retrying without `think` for models that reject it."""
+        response = await client.post(self.vision_url, json=payload)
+        if response.status_code == 400 and 'think' in response.text.lower():
+            payload = {k: v for k, v in payload.items() if k != 'think'}
+            response = await client.post(self.vision_url, json=payload)
+        response.raise_for_status()
+        message = response.json().get('message', {})
+        content = (message.get('content') or '').strip()
+        # A thinking model that exhausts num_predict before it starts answering returns
+        # empty content with the reasoning intact. That reasoning contains the text it
+        # read off the page, so it beats indexing nothing. Same salvage as OllamaAdapter.
+        return content or (message.get('thinking') or '')
+
     async def _vision_extract(self, path):
         try:
             encoded = base64.b64encode(path.read_bytes()).decode('ascii')
-            payload = {'model': self.vision_model, 'stream': False, 'keep_alive': self.keep_alive, 'messages': [{'role': 'user', 'content': 'Transcribe all visible text exactly. Include handwritten text where legible. Return only the transcription.', 'images': [encoded]}]}
-            async with httpx.AsyncClient(timeout=120) as client:
-                response = await client.post(self.vision_url, json=payload)
-                response.raise_for_status()
-                return response.json()['message']['content']
+            payload = {'model': self.vision_model, 'stream': False, 'keep_alive': self.keep_alive, **self._vision_options, 'messages': [{'role': 'user', 'content': 'Transcribe all visible text exactly. Include handwritten text where legible. Return only the transcription.', 'images': [encoded]}]}
+            async with httpx.AsyncClient(timeout=self.vision_timeout) as client:
+                return await self._vision_chat(client, payload)
         except Exception as exc:
             return f'[OCR unavailable: install Tesseract or configure Ollama vision: {exc}]'
 

@@ -36,6 +36,23 @@ _PREFERRED = {
     'reasoning': 'qwen-reasoning',
 }
 
+# Attachments a local vision model can actually look at. Anything else (PDF,
+# DOCX, XLSX) is already turned into text by the RAG extractor before it
+# reaches the model, so it needs no vision capability.
+_IMAGE_SUFFIXES = {'.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.webp', '.gif'}
+
+
+def is_image_attachment(attachment):
+    if not isinstance(attachment, dict):
+        return False
+    if str(attachment.get('mime_type') or '').lower().startswith('image/'):
+        return True
+    return Path(str(attachment.get('name') or '')).suffix.lower() in _IMAGE_SUFFIXES
+
+
+def has_image_attachments(attachments):
+    return any(is_image_attachment(item) for item in attachments or [])
+
 
 class ModelRouter:
     def __init__(self, path='config/models.yaml'):
@@ -51,9 +68,24 @@ class ModelRouter:
     def _enabled(self):
         return [m for m in self.models if m.get('enabled') and 'embedding' not in m.get('capabilities', [])]
 
-    def route(self, task):
+    def route(self, task, attachments=None):
         task_type = self.classify(task)
         capability = _CAPABILITY[task_type]
+
+        # An attached image decides how the model must be *invoked*, and the task
+        # text decides what gets *produced*, so these are routed separately. The
+        # wording of a question about a picture usually contains no visual
+        # keyword at all -- "give the dimensions for this" classifies as
+        # `general` -- and routing on text alone therefore sent drawings and
+        # photos to a text-only model, which answered from the (often garbled)
+        # OCR line instead of from the image. Overriding only the capability
+        # keeps the task type, plan and deliverable intact: a "save this as
+        # pptx" with a drawing attached still produces a deck, but the model
+        # building it can see the drawing.
+        requires_vision = has_image_attachments(attachments)
+        if requires_vision:
+            capability = 'vision'
+
         preferred = _PREFERRED.get(capability)
 
         enabled = self._enabled()
@@ -64,6 +96,21 @@ class ModelRouter:
             model = enabled[0] if enabled else {'id': 'fake-model', 'provider': 'fake', 'model': 'fake', 'capabilities': []}
 
         exact = model['id'] == preferred or capability in model.get('capabilities', [])
+        if exact and requires_vision:
+            reason = (
+                f'Classified as {task_type}; an attached image requires vision, '
+                f'matched capability "vision" to model "{model["id"]}".'
+            )
+        elif exact:
+            reason = f'Classified as {task_type}; matched capability "{capability}" to model "{model["id"]}".'
+        elif requires_vision:
+            reason = (
+                f'Classified as {task_type}; an attached image requires vision, but no enabled '
+                f'model advertises "vision" -- fell back to "{model["id"]}", which cannot see it.'
+            )
+        else:
+            reason = f'Classified as {task_type}; no model advertises "{capability}", fell back to "{model["id"]}".'
+
         return {
             'task_type': task_type,
             'model_id': model['id'],
@@ -71,11 +118,8 @@ class ModelRouter:
             'provider': model.get('provider', 'fake'),
             'tier': model.get('tier', 'default'),
             'capability': capability,
+            'requires_vision': requires_vision,
             'confidence': (0.96 if exact else 0.7) - (0.1 if task_type == 'multimodal' else 0.0),
-            'reason': (
-                f'Classified as {task_type}; matched capability "{capability}" to model "{model["id"]}".'
-                if exact else
-                f'Classified as {task_type}; no model advertises "{capability}", fell back to "{model["id"]}".'
-            ),
+            'reason': reason,
             'fallback_model_id': next((m['id'] for m in enabled if m['id'] != model['id']), None),
         }

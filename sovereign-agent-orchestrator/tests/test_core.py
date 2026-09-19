@@ -1,3 +1,4 @@
+import base64
 from pathlib import Path
 from app.policy.engine import Policy,Decision
 from app.workspace.manager import Workspace
@@ -439,3 +440,189 @@ def test_keep_alive_defaults_to_ollamas_own_default(monkeypatch):
 
     monkeypatch.setenv('OLLAMA_KEEP_ALIVE', '45m')
     assert OllamaAdapter('http://localhost:11434', 'm').keep_alive == '45m'
+
+
+def test_an_attached_image_routes_to_the_vision_model(tmp_path):
+    """Routing on task text alone sent pictures to a text-only model.
+
+    A question about a picture usually names no visual thing -- "give the
+    dimensions for this" classifies as `general` -- so the attachment, not the
+    wording, has to decide that vision is required. The task type still comes
+    from the text, so the deliverable is unchanged.
+    """
+    router = ModelRouter('config/models.yaml')
+    image = [{'file_id': 'f1', 'name': 'images.jpeg', 'mime_type': 'image/jpeg'}]
+
+    blind = router.route('give the dimensions for this')
+    assert blind['capability'] == 'reasoning' and not blind['requires_vision']
+
+    seeing = router.route('give the dimensions for this', image)
+    assert seeing['requires_vision'] and seeing['capability'] == 'vision'
+    assert seeing['model_name'] == 'qwen3-vl:8b'
+    assert seeing['task_type'] == 'general', 'the text still decides the deliverable'
+
+    # A deliverable-producing task keeps its plan but gains sight of the drawing.
+    deck = router.route('save this as pptx', image)
+    assert deck['task_type'] == 'presentation' and deck['capability'] == 'vision'
+
+    # Non-image attachments are already text by the time they reach the model.
+    assert not router.route('summarize this', [{'name': 'report.pdf', 'mime_type': 'application/pdf'}])['requires_vision']
+
+
+def test_attached_images_are_sent_to_the_model(tmp_path):
+    """The image bytes must reach the model, not just its OCR line.
+
+    Before this, an attachment only ever contributed a RAG file_id filter, so
+    the model answered about a drawing from a garbled transcription of it.
+    """
+    import asyncio
+    import io
+    from PIL import Image
+
+    class Recorder:
+        model = 'recorder'
+        url = 'fake://local'
+
+        def __init__(self):
+            self.messages = None
+
+        async def chat(self, messages, tools=None, **kwargs):
+            self.messages = messages
+            return {'content': 'The title block reads SHAFT ASSEMBLY, 120 mm overall.'}
+
+    model = Recorder()
+    orchestrator, store = _orchestrator(tmp_path, model)
+    job = _job('give the dimensions for this')
+
+    root = orchestrator.workspace.create(job['job_id'])
+    buffer = io.BytesIO()
+    Image.new('RGB', (48, 48), 'white').save(buffer, format='PNG')
+    (root / 'input' / 'drawing.png').write_bytes(buffer.getvalue())
+    job['attachments'] = [{'file_id': 'f1', 'name': 'drawing.png',
+                           'path': 'input/drawing.png', 'mime_type': 'image/png'}]
+
+    asyncio.run(orchestrator.run(job))
+
+    done = store.get(job['job_id'])
+    assert done['status'] == 'done'
+    assert done['routing']['requires_vision'] and done['routing']['capability'] == 'vision'
+
+    user = [m for m in model.messages if m['role'] == 'user'][-1]
+    assert user.get('images'), 'the image never reached the model'
+    assert base64.b64decode(user['images'][0])[:4] == b'\x89PNG'
+
+    system = model.messages[0]['content']
+    assert 'drawing.png' in system and 'you can see them' in system
+    assert 'outrank any OCR text' in system, 'otherwise the OCR line wins over the image'
+
+    assert any(e['type'] == 'images_attached' for e in store.events(job['job_id']))
+
+
+def test_a_missing_attachment_does_not_take_the_job_down(tmp_path):
+    """A path that cannot be read is reported, not raised mid-inference."""
+    import asyncio
+    from app.models.adapter import FakeModel
+
+    orchestrator, store = _orchestrator(tmp_path, FakeModel())
+    job = _job('give the dimensions for this')
+    orchestrator.workspace.create(job['job_id'])
+    job['attachments'] = [{'file_id': 'f1', 'name': 'gone.png',
+                           'path': 'input/gone.png', 'mime_type': 'image/png'}]
+
+    asyncio.run(orchestrator.run(job))
+
+    done = store.get(job['job_id'])
+    assert done['status'] == 'done'
+    assert any(e['type'] == 'attachment_unreadable' for e in store.events(job['job_id']))
+
+
+def test_unusable_tesseract_output_falls_back_to_the_vision_model(tmp_path):
+    """Tesseract fails silently on drawings: it returns noise, not an error.
+
+    The noise below is the real output that was indexed for `illus056.png`, and
+    it became that document's entire searchable content.
+    """
+    import asyncio
+
+    noise = 'Y i , 7 "Y0DO us snd *juoaf inding un'
+    assert RagService._ocr_is_unusable(noise)
+    assert RagService._ocr_is_unusable('$ Mechanical Component $'), 'too little to be evidence'
+    assert not RagService._ocr_is_unusable(
+        'TITLE BLOCK SHAFT ASSEMBLY DRAWING NO 4471 SCALE 1:2 MATERIAL EN8 STEEL')
+
+    from PIL import Image
+    source = tmp_path / 'illus056.png'
+    Image.new('RGB', (32, 32), 'white').save(source)
+
+    rag = RagService(f'sqlite:///{tmp_path / "rag.db"}')
+    rag._ocr = staticmethod(lambda path: noise)
+    transcript = 'SHAFT ASSEMBLY. Overall length 120 mm, bore 24 mm H7.'
+
+    async def _vision(path):
+        return transcript
+
+    rag._vision_extract = _vision
+
+    asyncio.run(rag.ingest(source))
+    hits = asyncio.run(rag.search('bore'))
+    assert hits and 'bore 24 mm' in hits[0]['content'], 'the noise was indexed instead'
+
+
+def test_leaked_reasoning_is_stripped_from_the_answer():
+    """Qwen3-VL ignores `think: false` and emits the tags inline instead.
+
+    The raw chain of thought then arrives as `content` and was shown to the user
+    as the answer -- including a repetition loop it never escaped.
+    """
+    from app.models.adapter import _strip_reasoning
+
+    assert _strip_reasoning('<think>weighing it up</think>\n\nOverall length 1\' 9 7/8".') == 'Overall length 1\' 9 7/8".'
+    assert _strip_reasoning('plain answer') == 'plain answer'
+    # Budget exhausted mid-thought: there is no answer to keep, so returning an
+    # empty string would lose the only thing the model actually read off the page.
+    assert _strip_reasoning('<think>never finished') == 'never finished'
+
+
+def test_an_unreadable_image_indexes_a_marker_not_the_ocr_noise(tmp_path):
+    """When OCR is noise and vision is unavailable, index neither.
+
+    The noise was previously stored as the document's whole content, so retrieval
+    handed it back as evidence and the model reported the file as unreadable
+    garbage instead of answering from the attached image.
+    """
+    import asyncio
+    from PIL import Image
+
+    source = tmp_path / 'scan.png'
+    Image.new('RGB', (32, 32), 'white').save(source)
+
+    rag = RagService(f'sqlite:///{tmp_path / "rag.db"}')
+    rag._ocr = staticmethod(lambda path: 'Y i , 7 "Y0DO us snd *juoaf Uo Le 9 S80G7 Bs F 29')
+
+    async def _unavailable(path):
+        return '[OCR unavailable: install Tesseract or configure Ollama vision: nope]'
+
+    rag._vision_extract = _unavailable
+
+    asyncio.run(rag.ingest(source))
+    hits = asyncio.run(rag.search('scan'))
+    assert hits, 'the file should still be indexed and findable by name'
+    content = hits[0]['content']
+    assert 'Y0DO' not in content, 'OCR noise was indexed as the document content'
+    assert 'no machine-readable text' in content and 'attached to the task' in content
+
+
+def test_vision_ocr_budget_is_bounded_and_configurable(monkeypatch):
+    """Ingest is synchronous, so the vision pass cannot wait indefinitely.
+
+    A dense drawing measured at 393s here, well past any sane upload wait.
+    """
+    monkeypatch.delenv('OCR_VISION_TIMEOUT_SECONDS', raising=False)
+    assert RagService('sqlite:///:memory:').vision_timeout == 180
+
+    monkeypatch.setenv('OCR_VISION_TIMEOUT_SECONDS', '420')
+    rag = RagService('sqlite:///:memory:')
+    assert rag.vision_timeout == 420
+    # Capped at 1024 the reasoning consumed the whole allowance and the call came
+    # back with empty content, so the budget has to leave room past the thinking.
+    assert rag._vision_options['options']['num_predict'] >= 2048

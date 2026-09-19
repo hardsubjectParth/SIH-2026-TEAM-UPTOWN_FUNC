@@ -1,5 +1,7 @@
+import base64
 import re
 import uuid
+from pathlib import Path
 from typing import TypedDict
 
 try:
@@ -28,6 +30,7 @@ except ImportError:
             return Graph()
 
 from app.models.adapter import OllamaAdapter
+from app.models.router import is_image_attachment
 from app.schemas.contracts import JobStatus
 
 
@@ -50,6 +53,39 @@ _TITLES = {
     'spreadsheet': 'Spreadsheet Analysis',
     'presentation': 'Briefing Deck',
 }
+
+# An attached image is sent to the model inline, base64-encoded, so its size lands
+# directly in the request and in the model's context window. Uploads are allowed up
+# to MAX_UPLOAD_BYTES (50 MB by default), which is far more than a vision model
+# needs and enough to blow a 32K context, so anything large is re-encoded down to
+# a long edge that still resolves dimension text on a drawing.
+_MAX_IMAGE_BYTES = 3 * 1024 * 1024
+_MAX_IMAGE_EDGE = 1600
+
+# Generation settings for a call that carries an image. Measured on qwen3-vl:8b with
+# a dense engineering drawing: it reasons before answering whatever `think` is set to,
+# so the default 1536-token budget was consumed before it reached an answer, and at
+# temperature 0.3 it fell into a repetition loop ("1 1/2" (another)" ~100 times) and
+# never escaped. A wider budget and a less greedy temperature fix both.
+_VISION_CHAT_OPTIONS = {'num_predict': 4096, 'temperature': 0.6}
+
+
+def _fit_for_vision(data):
+    """Shrink an oversized image for inline use; return it unchanged if we can't."""
+    if len(data) <= _MAX_IMAGE_BYTES:
+        return data
+    try:
+        import io
+        from PIL import Image
+
+        with Image.open(io.BytesIO(data)) as image:
+            image = image.convert('RGB')
+            image.thumbnail((_MAX_IMAGE_EDGE, _MAX_IMAGE_EDGE), Image.LANCZOS)
+            buffer = io.BytesIO()
+            image.save(buffer, format='JPEG', quality=85)
+        return buffer.getvalue()
+    except Exception:
+        return data
 
 
 class Orchestrator:
@@ -104,6 +140,28 @@ class Orchestrator:
             self._adapters[name] = OllamaAdapter(self.ollama_base_url, name, self.keep_alive)
         return self._adapters[name]
 
+    def _attached_images(self, j):
+        """Base64 payloads for the attachments a vision model can look at directly.
+
+        Ollama takes these as ``images`` on the user message. Without them the
+        model only ever saw the RAG extractor's OCR line for the file, which on
+        an engineering drawing is close to useless -- so a question about a
+        picture got answered from a garbled transcription rather than the
+        picture.
+        """
+        out = []
+        for item in j.get('attachments') or []:
+            if not is_image_attachment(item):
+                continue
+            try:
+                data = self.workspace.safe(j['job_id'], item['path']).read_bytes()
+            except (OSError, ValueError, KeyError) as exc:
+                self._emit(j, 'attachment_unreadable', {'name': item.get('name'), 'error': str(exc)})
+                continue
+            out.append({'name': item.get('name') or Path(str(item.get('path', ''))).name,
+                        'data': base64.b64encode(_fit_for_vision(data)).decode('ascii')})
+        return out
+
     async def _call_model(self, j, feedback=None):
         context = ''
         if getattr(self.tools, 'rag', None):
@@ -124,7 +182,8 @@ class Orchestrator:
             )
 
         task_type = j.get('routing', {}).get('task_type', 'general')
-        messages = [{'role': 'system', 'content': self._system_prompt(task_type)}]
+        images = self._attached_images(j)
+        messages = [{'role': 'system', 'content': self._system_prompt(task_type, images)}]
         if j.get('conversation_id'):
             history = self.store.messages(j['conversation_id'], 20)
             if history and history[-1]['role'] == 'user' and history[-1]['content'] == j['task']:
@@ -137,11 +196,16 @@ class Orchestrator:
                 '\n\nA previous attempt did not pass verification for this reason:\n'
                 f'{feedback}\nProduce a corrected response.'
             )
-        messages.append({'role': 'user', 'content': user})
+        message = {'role': 'user', 'content': user}
+        if images:
+            message['images'] = [image['data'] for image in images]
+            self._emit(j, 'images_attached', {'names': [image['name'] for image in images]})
+        messages.append(message)
 
         adapter = self._adapter_for(j['routing'])
+        options = _VISION_CHAT_OPTIONS if images else {}
         try:
-            response = await adapter.chat(messages)
+            response = await adapter.chat(messages, **options)
         except Exception as exc:
             # The routed model may not be pulled on this host. Degrade to the
             # process default (or FakeModel) rather than failing the whole job.
@@ -151,7 +215,7 @@ class Orchestrator:
                 'from': j['routing'].get('model_name'), 'to': getattr(self.model, 'model', 'fallback'), 'error': str(exc),
             })
             adapter = self.model
-            response = await adapter.chat(messages)
+            response = await adapter.chat(messages, **options)
 
         j['model_response'] = response
         j['_model_name'] = getattr(adapter, 'model', j['routing'].get('model_name', 'unknown'))
@@ -164,7 +228,7 @@ class Orchestrator:
         return response
 
     @staticmethod
-    def _system_prompt(task_type):
+    def _system_prompt(task_type, images=None):
         base = (
             'You are the local planning model for the Sovereign Agent Orchestrator. '
             'Use conversation history and retrieved evidence when provided. For factual '
@@ -177,15 +241,31 @@ class Orchestrator:
             'never say you are unable to generate or send a file.'
         )
         if task_type == 'coding':
-            return base + (
+            base += (
                 ' The task is a coding task. Return the solution as fenced code blocks '
                 '(```python ... ```). Include a runnable check or assertions in the main block. '
                 'Keep it self-contained and dependency-free.'
             )
         if task_type == 'calculation':
-            return base + ' Show the calculation step by step and state the final result with units.'
+            base += ' Show the calculation step by step and state the final result with units.'
         if task_type == 'presentation':
-            return base + ' Structure the answer as short titled sections suitable for slides.'
+            base += ' Structure the answer as short titled sections suitable for slides.'
+        if images:
+            names = ', '.join(image['name'] for image in images)
+            # Without this the retrieval instruction above works against us: the
+            # evidence block also carries the OCR line for these same files, and a
+            # drawing OCRs to noise, so the model dutifully reported that the
+            # evidence was insufficient while the image sat unread in its context.
+            base += (
+                f' The user attached {len(images)} image(s) ({names}), included directly in this '
+                'message -- you can see them. Answer from what you actually observe in them: read '
+                'off dimensions, labels, callouts, tag numbers, title blocks and annotations as '
+                'they appear. The images are the primary evidence and outrank any OCR text for '
+                'the same filenames in the retrieved evidence below, which is a machine '
+                'transcription and is often garbled. Do not say the evidence is insufficient '
+                'without first describing what you can see. State plainly if a value genuinely '
+                'is not legible or not shown, rather than guessing it.'
+            )
         return base
 
     # ------------------------------------------------------------------ plan
@@ -482,7 +562,7 @@ class Orchestrator:
         self.workspace.create(j['job_id'])
         self._status(j, JobStatus.planning)
 
-        j['routing'] = self.router.route(j['task'])
+        j['routing'] = self.router.route(j['task'], j.get('attachments'))
         j['task_type'] = j['routing']['task_type']
         self._emit(j, 'model_selected', j['routing'])
 
