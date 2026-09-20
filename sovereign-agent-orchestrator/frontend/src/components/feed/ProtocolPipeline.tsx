@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { motion } from 'framer-motion'
 import type { ReactNode } from 'react'
 import type { Job, JobEvent, PlanStep, Verification } from '../../types/api'
 import { CheckIcon, ChevronRightIcon, XIcon } from '../shell/icons'
@@ -147,13 +147,11 @@ function ProtocolPipeline({
   const status = job?.status
   const finishedOk = status ? TERMINAL_OK.has(status) : false
   const finishedBad = status ? TERMINAL_BAD.has(status) : false
-  const settled = finishedOk || finishedBad
-
-  // Open while the run is live -- that is the whole point of the pane -- and fold
-  // itself away once it settles, so a long session is not a wall of finished
-  // pipelines. An explicit click wins over that and is remembered for this turn.
-  const [override, setOverride] = useState<boolean | null>(null)
-  const open = override ?? !settled
+  // Open unless the reader closes it. An earlier version folded itself away once the
+  // run settled, on the theory that finished pipelines pile up -- but only the current
+  // turn renders one at all, so that bought nothing and simply made the pane vanish at
+  // the moment the answer arrived.
+  const [open, setOpen] = useState(true)
   const workerError = lastOf('worker_error')
   const halted = Boolean(lastOf('model_error')) || Boolean(workerError) || Boolean(job?.error)
 
@@ -450,7 +448,7 @@ function ProtocolPipeline({
     <div className="border-hairline mt-4 rounded-2xl bg-surface px-5 py-4">
       <button
         type="button"
-        onClick={() => setOverride(!open)}
+        onClick={() => setOpen(!open)}
         aria-expanded={open}
         className="flex w-full items-center gap-3 text-left"
       >
@@ -470,17 +468,14 @@ function ProtocolPipeline({
         <p className={`label-micro shrink-0 ${finishedBad ? 'text-danger' : ''}`}>{headline}</p>
       </button>
 
-      <AnimatePresence initial={false}>
-        {open ? (
-          <motion.div
-            key="stages"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.22, ease: 'easeOut' }}
-            className="overflow-hidden"
-          >
-            <div className="mt-5 flex flex-col">
+      {open ? (
+        <motion.div
+          key="stages"
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.2, ease: 'easeOut' }}
+        >
+          <div className="mt-5 flex flex-col">
               {STAGES.map((stage, index) => {
                 const state = stateFor(index)
                 const detail = detailFor(stage.key, state)
@@ -540,10 +535,9 @@ function ProtocolPipeline({
                   </div>
                 )
               })}
-            </div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
+          </div>
+        </motion.div>
+      ) : null}
     </div>
   )
 }

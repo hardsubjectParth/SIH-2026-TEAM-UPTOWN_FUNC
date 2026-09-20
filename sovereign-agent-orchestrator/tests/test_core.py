@@ -696,3 +696,46 @@ def test_the_request_timeout_follows_a_per_call_token_budget():
     assert adapter.default_timeout == 632, 'baseline from LLM_MAX_TOKENS=1536'
     # 8192 // 3 + 120 = 2850
     assert max(adapter.default_timeout, 8192 // 3 + 120) == 2850
+
+
+def test_conversation_history_comes_back_in_order(tmp_path):
+    """Message ids are random UUIDs, so ordering by id ordered a conversation
+    arbitrarily: turns rendered with the prompt below its own answer, and LIMIT
+    returned an arbitrary subset instead of the most recent messages. The
+    orchestrator passes this same call to the model as history, so the model was
+    reading scrambled context as well."""
+    import json
+    import uuid
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import text
+    from app.storage.store import Store
+
+    store = Store(f'sqlite:///{tmp_path / "store.db"}')
+    conversation = str(uuid.uuid4())
+    store.create_conversation(conversation, 't', 'u', 'Ordering')
+
+    # Written with ids deliberately unsorted against time, which is what real UUIDs
+    # are: the previous ORDER BY id returned exactly this insertion-independent mess.
+    start = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
+    expected = []
+    with store.engine.begin() as db:
+        for index in range(12):
+            role = 'user' if index % 2 == 0 else 'assistant'
+            content = f'{role}-{index}'
+            expected.append(content)
+            db.execute(
+                text('INSERT INTO messages(id,conversation_id,role,content,citations,created_at) '
+                     'VALUES(:id,:conversation,:role,:content,:citations,:created)'),
+                {'id': str(uuid.uuid4()), 'conversation': conversation, 'role': role,
+                 'content': content, 'citations': json.dumps([]),
+                 'created': (start + timedelta(minutes=index)).isoformat()},
+            )
+
+    assert [m['content'] for m in store.messages(conversation, 50)] == expected
+
+    # A limit must take the most RECENT messages, still in order -- not whichever
+    # ids happened to sort highest.
+    assert [m['content'] for m in store.messages(conversation, 4)] == expected[-4:]
+
+    # And a turn must never render with its answer above its prompt.
+    assert [m['role'] for m in store.messages(conversation, 50)] == ['user', 'assistant'] * 6

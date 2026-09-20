@@ -209,6 +209,15 @@ class Store:
             db.execute(text('UPDATE conversations SET updated_at=:updated WHERE id=:id'), {'id': conversation_id, 'updated': now})
 
     def messages(self, conversation_id, limit=20):
+        # Ordered by created_at, not by id: message ids are random UUIDs, so
+        # `ORDER BY id` sorted a conversation lexicographically by UUID -- which is
+        # to say, arbitrarily. Turns rendered out of order (a prompt below the answer
+        # it belonged to), and with LIMIT applied to that ordering a long conversation
+        # returned an arbitrary subset rather than the most recent messages. The
+        # orchestrator feeds this same call to the model as conversation history, so
+        # the model was reading scrambled context too. created_at is a UTC ISO-8601
+        # string, which sorts correctly lexicographically; id breaks ties so the order
+        # is at least stable between calls.
         with self.engine.connect() as db:
-            rows = db.execute(text('SELECT id,conversation_id,role,content,citations,created_at FROM messages WHERE conversation_id=:conversation ORDER BY id DESC LIMIT :limit'), {'conversation': conversation_id, 'limit': min(max(limit, 1), 100)}).fetchall()
+            rows = db.execute(text('SELECT id,conversation_id,role,content,citations,created_at FROM messages WHERE conversation_id=:conversation ORDER BY created_at DESC, id DESC LIMIT :limit'), {'conversation': conversation_id, 'limit': min(max(limit, 1), 100)}).fetchall()
         return [dict(row._mapping, citations=self._decode(row.citations)) for row in reversed(rows)]
