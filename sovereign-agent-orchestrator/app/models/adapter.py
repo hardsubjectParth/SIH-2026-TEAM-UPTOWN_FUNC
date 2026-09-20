@@ -89,6 +89,7 @@ class OllamaAdapter:
         self.default_timeout = int(env_timeout) if env_timeout else max(180, self.num_predict // 3 + 120)
 
     async def chat(self, messages, tools=None, **kwargs):
+        num_predict = kwargs.get('num_predict', self.num_predict)
         payload = {
             'model': self.model,
             'messages': messages,
@@ -97,7 +98,7 @@ class OllamaAdapter:
             'keep_alive': self.keep_alive,
             'options': {
                 'num_ctx': self.num_ctx,
-                'num_predict': kwargs.get('num_predict', self.num_predict),
+                'num_predict': num_predict,
                 'temperature': kwargs.get('temperature', 0.3),
             },
         }
@@ -108,7 +109,11 @@ class OllamaAdapter:
         # Convert UUID and other non-JSON-native objects to strings
         payload = json.loads(json.dumps(payload, default=str))
 
-        timeout = kwargs.get('timeout', self.default_timeout)
+        # The timeout has to follow the budget actually in play, not the one this
+        # adapter was constructed with. A caller raising num_predict for a single
+        # call -- the vision path does exactly that -- would otherwise keep the
+        # default's shorter deadline and be cut off mid-generation.
+        timeout = kwargs.get('timeout', max(self.default_timeout, num_predict // 3 + 120))
         try:
             async with httpx.AsyncClient(timeout=timeout) as c:
                 r = await c.post(self.url, json=payload)

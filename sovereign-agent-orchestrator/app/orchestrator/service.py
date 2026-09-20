@@ -62,30 +62,101 @@ _TITLES = {
 _MAX_IMAGE_BYTES = 3 * 1024 * 1024
 _MAX_IMAGE_EDGE = 1600
 
-# Generation settings for a call that carries an image. Measured on qwen3-vl:8b with
-# a dense engineering drawing: it reasons before answering whatever `think` is set to,
-# so the default 1536-token budget was consumed before it reached an answer, and at
-# temperature 0.3 it fell into a repetition loop ("1 1/2" (another)" ~100 times) and
-# never escaped. A wider budget and a less greedy temperature fix both.
-_VISION_CHAT_OPTIONS = {'num_predict': 4096, 'temperature': 0.6}
+# There is a floor as well as a ceiling. A vision model tokenises an image by area,
+# so a small input is not merely low-detail -- it is allotted few visual tokens and
+# read coarsely. Measured on a 335x597 engineering drawing: sent at native size the
+# model reported "two holes of diameter 8.15" for a `2-R15` fillet callout and a
+# width of 14.5 for a section-plane label, inventing features that are not on the
+# page, and missed the part's main diameter. The identical image enlarged past this
+# floor read the diameter correctly and fabricated nothing, across two independent
+# variants. Interpolation adds no optical information -- what it buys is
+# tokenisation headroom -- so this is a floor under a bad input, not a substitute
+# for scanning the drawing properly.
+# The floor applies to the SHORT edge. Constraining the long edge instead leaves a
+# portrait page far too narrow -- a 335x597 drawing fitted to a 1400 long edge is only
+# 786 wide, and measured at that width the model still misread the main diameter
+# (reporting "81.92" for a bare Ø192) where the same drawing at ~1340 wide read it
+# correctly. Horizontal pixels per character is what decides whether a callout is
+# legible, and that follows the short edge on a portrait scan.
+_MIN_IMAGE_SHORT_EDGE = 1200
+# Keep the enlarged result inside the ceiling the downscale path targets, so a very
+# elongated image cannot be enlarged into something that then needs shrinking.
+_MAX_UPSCALED_LONG_EDGE = 2600
+# Cap the enlargement so a thumbnail or an icon is not blown up into a megapixel of
+# interpolation, which costs tokens and latency and recovers nothing.
+_MAX_UPSCALE = 4.0
+# Only images that are genuinely starved of pixels are enlarged. A 1600x900 screenshot
+# has a narrow short edge but 1.4 MP of detail and reads fine as it is; enlarging it
+# would spend tokens and latency to add nothing. The drawing that prompted all of this
+# is 0.2 MP.
+_UPSCALE_BELOW_PIXELS = 1_200_000
+
+# Generation settings for a call that carries an image, all three measured on
+# qwen3-vl:8b against a dense engineering drawing.
+#
+# num_predict: the model reasons before answering whatever `think` is set to, and that
+# reasoning scales with image size -- on an enlarged drawing it ran to 12,277
+# characters. At 1536 it never reached an answer at all; at 4096 it produced 400
+# characters and was cut off mid-sentence. 8192 leaves room for the answer.
+#
+# temperature: reading dimensions off a page is transcription, not composition, so the
+# sampler should be close to greedy. An early run at 0.3 fell into a repetition loop
+# ("1 1/2" (another)" ~100 times) and 0.6 was adopted to escape it -- but that loop was
+# budget starvation at num_predict=1536, and it does not reproduce at 8192. Measured
+# over repeated samples on the same image, 0.2 scored 8/10 known labels twice with
+# byte-identical output, while 0.6 scored 6/10 and 7/10 and flipped a `150` to `158`
+# between runs. High temperature was buying variance, not robustness.
+_VISION_CHAT_OPTIONS = {'num_predict': 8192, 'temperature': 0.2}
 
 
 def _fit_for_vision(data):
-    """Shrink an oversized image for inline use; return it unchanged if we can't."""
-    if len(data) <= _MAX_IMAGE_BYTES:
-        return data
+    """Bring an attached image into the size band the vision model reads well.
+
+    Returns ``(bytes, note)``; the note describes any resize, for the event stream.
+    Anything unreadable is passed through untouched rather than failing the job.
+    """
     try:
         import io
         from PIL import Image
 
-        with Image.open(io.BytesIO(data)) as image:
-            image = image.convert('RGB')
-            image.thumbnail((_MAX_IMAGE_EDGE, _MAX_IMAGE_EDGE), Image.LANCZOS)
-            buffer = io.BytesIO()
-            image.save(buffer, format='JPEG', quality=85)
-        return buffer.getvalue()
+        with Image.open(io.BytesIO(data)) as opened:
+            image = opened.convert('RGB')
+            width, height = image.size
+            long_edge = max(width, height)
+
+            if len(data) > _MAX_IMAGE_BYTES:
+                image.thumbnail((_MAX_IMAGE_EDGE, _MAX_IMAGE_EDGE), Image.LANCZOS)
+                # JPEG for the downscale path: these are large photos and scans,
+                # where the size saving matters more than the last of the detail.
+                return _encode(image, 'JPEG', (width, height), 'downscaled')
+
+            short_edge = min(width, height)
+            if short_edge < _MIN_IMAGE_SHORT_EDGE and width * height < _UPSCALE_BELOW_PIXELS:
+                scale = min(
+                    _MIN_IMAGE_SHORT_EDGE / short_edge,
+                    _MAX_UPSCALED_LONG_EDGE / long_edge,
+                    _MAX_UPSCALE,
+                )
+                if scale <= 1.0:
+                    return data, None
+                image = image.resize((round(width * scale), round(height * scale)), Image.LANCZOS)
+                # PNG for the upscale path: the inputs that need it are line art,
+                # and JPEG ringing around thin dimension lines is exactly the
+                # detail the enlargement exists to preserve.
+                return _encode(image, 'PNG', (width, height), 'upscaled')
+
+        return data, None
     except Exception:
-        return data
+        return data, None
+
+
+def _encode(image, fmt, original_size, action):
+    import io
+
+    buffer = io.BytesIO()
+    image.save(buffer, format=fmt, **({'quality': 85} if fmt == 'JPEG' else {}))
+    note = f'{action} {original_size[0]}x{original_size[1]} -> {image.width}x{image.height}'
+    return buffer.getvalue(), note
 
 
 class Orchestrator:
@@ -158,8 +229,10 @@ class Orchestrator:
             except (OSError, ValueError, KeyError) as exc:
                 self._emit(j, 'attachment_unreadable', {'name': item.get('name'), 'error': str(exc)})
                 continue
+            fitted, note = _fit_for_vision(data)
             out.append({'name': item.get('name') or Path(str(item.get('path', ''))).name,
-                        'data': base64.b64encode(_fit_for_vision(data)).decode('ascii')})
+                        'note': note,
+                        'data': base64.b64encode(fitted).decode('ascii')})
         return out
 
     async def _call_model(self, j, feedback=None):
@@ -199,7 +272,10 @@ class Orchestrator:
         message = {'role': 'user', 'content': user}
         if images:
             message['images'] = [image['data'] for image in images]
-            self._emit(j, 'images_attached', {'names': [image['name'] for image in images]})
+            self._emit(j, 'images_attached', {
+                'names': [image['name'] for image in images],
+                'resized': [f"{image['name']}: {image['note']}" for image in images if image.get('note')],
+            })
         messages.append(message)
 
         adapter = self._adapter_for(j['routing'])

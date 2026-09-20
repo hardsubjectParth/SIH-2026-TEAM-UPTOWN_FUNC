@@ -626,3 +626,73 @@ def test_vision_ocr_budget_is_bounded_and_configurable(monkeypatch):
     # Capped at 1024 the reasoning consumed the whole allowance and the call came
     # back with empty content, so the budget has to leave room past the thinking.
     assert rag._vision_options['options']['num_predict'] >= 2048
+
+
+def test_small_images_are_enlarged_before_they_reach_the_vision_model():
+    """A vision model tokenises by area, so a small image is read coarsely.
+
+    Measured on a 335x597 drawing: at native size the model reported "two holes
+    of diameter 8.15" for a `2-R15` fillet callout, inventing features that are
+    not on the page. Past this floor it fabricated nothing.
+    """
+    import io
+    from PIL import Image
+    from app.orchestrator.service import _fit_for_vision, _MIN_IMAGE_SHORT_EDGE
+
+    def encode(width, height):
+        buffer = io.BytesIO()
+        Image.new('RGB', (width, height), 'white').save(buffer, format='PNG')
+        return buffer.getvalue()
+
+    # The floor is on the short edge. Fitting the long edge instead leaves a portrait
+    # page only 786 wide, and at that width the model still misread Ø192 as "81.92".
+    fitted, note = _fit_for_vision(encode(335, 597))
+    enlarged = Image.open(io.BytesIO(fitted))
+    assert min(enlarged.size) == _MIN_IMAGE_SHORT_EDGE
+    assert enlarged.size == (1200, 2139), 'aspect ratio must be preserved'
+    assert note and 'upscaled' in note
+
+    # An icon must not be blown up into a megapixel of pure interpolation.
+    fitted, _ = _fit_for_vision(encode(64, 64))
+    assert Image.open(io.BytesIO(fitted)).size == (256, 256)
+
+    # A narrow short edge is not on its own a reason to enlarge: a 1600x900 screenshot
+    # carries 1.4 MP and reads fine, so enlarging it would only cost tokens.
+    original = encode(1600, 900)
+    fitted, note = _fit_for_vision(original)
+    assert fitted == original and note is None
+
+    # Anything already in band is passed through byte-identical.
+    original = encode(1500, 1300)
+    fitted, note = _fit_for_vision(original)
+    assert fitted == original and note is None
+
+
+def test_oversized_images_are_still_shrunk():
+    """The ceiling still applies: a 50 MB upload would otherwise blow the context."""
+    import io
+    from PIL import Image
+    from app.orchestrator.service import _fit_for_vision, _MAX_IMAGE_EDGE, _MAX_IMAGE_BYTES
+
+    noise = Image.effect_noise((3000, 2400), 64).convert('RGB')
+    buffer = io.BytesIO()
+    noise.save(buffer, format='PNG')
+    assert len(buffer.getvalue()) > _MAX_IMAGE_BYTES, 'fixture must exceed the ceiling'
+
+    fitted, note = _fit_for_vision(buffer.getvalue())
+    assert max(Image.open(io.BytesIO(fitted)).size) == _MAX_IMAGE_EDGE
+    assert note and 'downscaled' in note
+
+
+def test_the_request_timeout_follows_a_per_call_token_budget():
+    """A caller raising num_predict must get a deadline that fits it.
+
+    The vision path raises the budget per call; with the adapter's construction-time
+    timeout that generation would be cut off partway through.
+    """
+    from app.models.adapter import OllamaAdapter
+
+    adapter = OllamaAdapter('http://localhost:11434', 'qwen3-vl:8b')
+    assert adapter.default_timeout == 632, 'baseline from LLM_MAX_TOKENS=1536'
+    # 8192 // 3 + 120 = 2850
+    assert max(adapter.default_timeout, 8192 // 3 + 120) == 2850
