@@ -58,9 +58,22 @@ function IntelligenceFeedPage() {
   // with a manual "show earlier" expansion, which is enough to keep the DOM bounded.
   const [visibleCount, setVisibleCount] = useState(50)
 
-  const { job } = useJob(activeJobId)
-  const { events } = useJobEvents(activeJobId)
   const { jobs } = useJobs(100)
+
+  // A reload leaves no in-page pendingTask, so the pane used to vanish for a turn that
+  // was still running -- refreshing the page looked exactly like the job disappearing.
+  // GET /agent carries conversation_id, so the conversation's most recent job is
+  // recoverable and the pipeline can be picked back up where it was.
+  const resumableJobId = useMemo(() => {
+    if (!routeId) return null
+    const mine = jobs.filter((summary) => summary.conversation_id === routeId)
+    if (mine.length === 0) return null
+    return [...mine].sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')))[0].job_id
+  }, [jobs, routeId])
+
+  const trackedJobId = activeJobId ?? resumableJobId
+  const { job } = useJob(trackedJobId)
+  const { events } = useJobEvents(trackedJobId)
   const scrollRef = useRef<HTMLDivElement>(null)
   const rank = user ? RANK[user.role] : RANK.lower
 
@@ -268,9 +281,9 @@ function IntelligenceFeedPage() {
                 ),
               )}
 
-              {pendingTask ? (
+              {pendingTask || trackedJobId ? (
                 <>
-                  {!turnPersisted ? (
+                  {pendingTask && !turnPersisted ? (
                     <motion.div
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -292,16 +305,21 @@ function IntelligenceFeedPage() {
                   >
                     <AssistantOrb />
                     <div className="min-w-0 flex-1">
-                      {!turnPersisted ? (
+                      {pendingTask && !turnPersisted ? (
                         <div className="flex items-center gap-3">
                           <h3 className="font-display text-[19px] font-medium text-foreground">
                             {turnHeader(historyMessages.length, true, job?.status)}
                           </h3>
                           {job ? <StatusPill status={job.status} /> : null}
                         </div>
+                      ) : !pendingTask && job ? (
+                        <div className="flex items-center gap-3">
+                          <h3 className="font-display text-[19px] font-medium text-foreground">Last Run.</h3>
+                          <StatusPill status={job.status} />
+                        </div>
                       ) : null}
 
-                      {job?.final_answer && !turnPersisted ? (
+                      {pendingTask && job?.final_answer && !turnPersisted ? (
                         <div className="markdown mt-4">
                           <ReactMarkdown remarkPlugins={[remarkGfm]}>{job.final_answer}</ReactMarkdown>
                         </div>
