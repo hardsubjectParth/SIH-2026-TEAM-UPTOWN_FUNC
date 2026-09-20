@@ -88,12 +88,21 @@ function IntelligenceFeedPage() {
   // is a route change but not the user switching sessions -- resetting there tore down
   // the live panel microseconds after it mounted, which is what made a new session show
   // no progress at all until the finished answer appeared.
+  //
+  // Two things make this effect delicate. The guard must not consume itself: it used
+  // to null the ref on the first run, and React's development StrictMode invokes
+  // effects twice, so the replay found the ref already cleared, fell through, and
+  // wiped the in-flight turn -- the pane vanished the instant a brand-new session
+  // redirected. Comparing against the previous route id makes the replay a no-op on
+  // its own, and the ref is left intact so it stays true for as long as we are on
+  // the conversation we navigated to.
   const selfNavigated = useRef<string | null>(null)
+  const previousRouteId = useRef<string | undefined>(undefined)
   useEffect(() => {
-    if (selfNavigated.current && selfNavigated.current === routeId) {
-      selfNavigated.current = null
-      return
-    }
+    const previous = previousRouteId.current
+    previousRouteId.current = routeId
+    if (previous === routeId) return
+    if (selfNavigated.current === routeId) return
     setActiveJobId(null)
     setPendingTask(null)
     setSubmission(null)
