@@ -60,13 +60,13 @@ function Login() {
         className="relative w-full max-w-[420px]"
       >
         <div className="text-center">
-          <h1 className="font-display text-[40px] leading-none font-bold tracking-tight text-foreground">Sovereign AI</h1>
+          <h1 className="font-display text-[34px] leading-none font-bold tracking-tight text-foreground">Sovereign AI</h1>
           <p className="label-wide mt-4">Intelligence Protocol Access</p>
         </div>
 
         <div className="mt-10 rounded-2xl bg-surface/40 p-6">
           <div className="border-hairline rounded-2xl bg-surface px-8 py-9">
-            <h2 className="font-display text-[26px] leading-tight font-semibold text-foreground">Authorization Required</h2>
+            <h2 className="font-display text-[22px] leading-tight font-semibold text-foreground">Authorization Required</h2>
 
             <form onSubmit={handleSubmit} className="mt-7 flex flex-col gap-5">
               <label className="flex flex-col gap-2.5">

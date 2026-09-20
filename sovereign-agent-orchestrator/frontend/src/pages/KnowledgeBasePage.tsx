@@ -46,7 +46,7 @@ function KnowledgeBasePage() {
         <header className="flex shrink-0 items-center gap-5 border-b border-white/7 px-8 py-4">
           <div className="flex shrink-0 items-center gap-3.5">
             <KnowledgeIcon size={20} className="text-accent" />
-            <h1 className="font-display text-[24px] leading-none font-medium whitespace-nowrap text-foreground">
+            <h1 className="font-display text-[21px] leading-none font-medium whitespace-nowrap text-foreground">
               Organizational Knowledge
             </h1>
           </div>
@@ -86,7 +86,7 @@ function KnowledgeBasePage() {
         <main className="scroll-slim min-h-0 flex-1 overflow-y-auto px-8 py-8">
           {results.length > 0 ? (
             <section className="mb-10">
-              <h2 className="font-display text-[20px] font-medium text-foreground">Retrieved Evidence</h2>
+              <h2 className="font-display text-[17px] font-medium text-foreground">Retrieved Evidence</h2>
               <div className="mt-4 flex flex-col gap-2.5">
                 {results.map((hit, index) => (
                   <div key={index} className="border-hairline rounded-2xl bg-surface px-5 py-4">
@@ -104,7 +104,7 @@ function KnowledgeBasePage() {
           ) : null}
 
           <div className="flex items-baseline justify-between">
-            <h2 className="font-display text-[22px] font-medium text-foreground">Accessible Documents</h2>
+            <h2 className="font-display text-[19px] font-medium text-foreground">Accessible Documents</h2>
             <label className="flex items-center gap-2 text-[13px] text-muted-foreground">
               Sort by:
               <span className="relative flex items-center">
@@ -209,7 +209,7 @@ function KnowledgeBasePage() {
 
       <aside className="hidden h-screen w-[380px] shrink-0 flex-col border-l border-white/7 bg-black/20 xl:flex">
         <header className="shrink-0 border-b border-white/7 px-6 py-[18px]">
-          <h2 className="font-display text-[22px] leading-none font-medium text-foreground">Ingest Knowledge</h2>
+          <h2 className="font-display text-[19px] leading-none font-medium text-foreground">Ingest Knowledge</h2>
         </header>
         <IngestPanel onIngested={() => mutate()} />
       </aside>

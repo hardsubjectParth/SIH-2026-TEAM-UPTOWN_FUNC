@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { motion } from 'framer-motion'
+import { AnimatePresence, motion } from 'framer-motion'
 import type { ReactNode } from 'react'
 import type { Job, JobEvent, PlanStep, Verification } from '../../types/api'
-import { CheckIcon, XIcon } from '../shell/icons'
+import { CheckIcon, ChevronRightIcon, XIcon } from '../shell/icons'
 
 /* The live "prompt → model selection → plan → execution → verification → delivery"
    readout. Every stage is driven by a real SSE event emitted by the orchestrator
@@ -147,6 +147,13 @@ function ProtocolPipeline({
   const status = job?.status
   const finishedOk = status ? TERMINAL_OK.has(status) : false
   const finishedBad = status ? TERMINAL_BAD.has(status) : false
+  const settled = finishedOk || finishedBad
+
+  // Open while the run is live -- that is the whole point of the pane -- and fold
+  // itself away once it settles, so a long session is not a wall of finished
+  // pipelines. An explicit click wins over that and is remembered for this turn.
+  const [override, setOverride] = useState<boolean | null>(null)
+  const open = override ?? !settled
   const workerError = lastOf('worker_error')
   const halted = Boolean(lastOf('model_error')) || Boolean(workerError) || Boolean(job?.error)
 
@@ -235,9 +242,20 @@ function ProtocolPipeline({
 
     if (key === 'routing') {
       if (workerError) {
-        return <Row label="Error" value={<span className="text-danger">{String(workerError.data.error ?? 'The worker failed')}</span>} />
+        return (
+          <Row
+            label="Error"
+            value={<span className="text-danger">{String(workerError.data.error ?? 'The worker failed')}</span>}
+          />
+        )
       }
-      if (modelError) return <Row label="Error" value={<span className="text-danger">{String(modelError.data.error ?? 'Model call failed')}</span>} />
+      if (modelError)
+        return (
+          <Row
+            label="Error"
+            value={<span className="text-danger">{String(modelError.data.error ?? 'Model call failed')}</span>}
+          />
+        )
       if (!routing) return <Row label="Status" value="Selecting a capability-matched model…" />
       const awaitingModel = state === 'active'
       return (
@@ -249,7 +267,10 @@ function ProtocolPipeline({
           ) : null}
           {routing.reason ? <Row label="Reason" value={routing.reason} /> : null}
           {fallback ? (
-            <Row label="Fallback" value={<span className="text-warning">Preferred model unavailable — fell back</span>} />
+            <Row
+              label="Fallback"
+              value={<span className="text-warning">Preferred model unavailable — fell back</span>}
+            />
           ) : null}
           {awaitingModel ? (
             <Row
@@ -277,7 +298,10 @@ function ProtocolPipeline({
         <>
           <Row label="Steps" value={`${planSteps.length}`} />
           {replans > 0 ? (
-            <Row label="Re-planned" value={<span className="text-warning">{replans}× after failed verification</span>} />
+            <Row
+              label="Re-planned"
+              value={<span className="text-warning">{replans}× after failed verification</span>}
+            />
           ) : null}
           <ol className="mt-2 flex flex-col gap-1">
             {planSteps.map((step, index) => (
@@ -376,7 +400,8 @@ function ProtocolPipeline({
     }
 
     if (key === 'delivery') {
-      if (!artifacts.length) return <Row label="Status" value={finishedOk ? 'Answer delivered' : 'Assembling deliverables…'} />
+      if (!artifacts.length)
+        return <Row label="Status" value={finishedOk ? 'Answer delivered' : 'Assembling deliverables…'} />
       return (
         <div className="flex flex-col gap-1">
           {artifacts.map((artifact) => (
@@ -393,8 +418,7 @@ function ProtocolPipeline({
   }
 
   // Timestamp for a stage = when its first event landed.
-  const rawStampFor = (index: number) =>
-    events.find((event) => EVENT_STAGE[event.type] === index)?.timestamp
+  const rawStampFor = (index: number) => events.find((event) => EVENT_STAGE[event.type] === index)?.timestamp
   const stampFor = (index: number) => clockOf(rawStampFor(index))
 
   // The active stage runs from its own first event, or -- before any event for it
@@ -406,74 +430,120 @@ function ProtocolPipeline({
     !finishedOk && !finishedBad && submission?.phase !== 'failed' && (events.length > 0 || Boolean(submissionInFlight)),
   )
 
+  const headline = finishedOk
+    ? 'Complete'
+    : finishedBad || (submission?.phase === 'failed' && !job)
+      ? 'Halted'
+      : `Stage ${Math.min(reached + 1, STAGES.length)} of ${STAGES.length}`
+
+  // What the collapsed row has to earn its place: the routed model and the outcome,
+  // so the turn can be read without expanding anything.
+  const summary = [
+    routing?.model_name || routing?.model_id,
+    planSteps.length ? `${planSteps.length} step${planSteps.length === 1 ? '' : 's'}` : null,
+    toolStarts.length ? `${toolStarts.length} tool${toolStarts.length === 1 ? '' : 's'}` : null,
+    checks.length ? `${checks.filter(([, ok]) => ok).length}/${checks.length} checks` : null,
+    artifacts.length ? `${artifacts.length} artifact${artifacts.length === 1 ? '' : 's'}` : null,
+  ].filter(Boolean)
+
   return (
-    <div className="border-hairline mt-4 rounded-2xl bg-surface px-5 py-5">
-      <div className="flex items-center justify-between">
+    <div className="border-hairline mt-4 rounded-2xl bg-surface px-5 py-4">
+      <button
+        type="button"
+        onClick={() => setOverride(!open)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-3 text-left"
+      >
+        <motion.span
+          animate={{ rotate: open ? 90 : 0 }}
+          transition={{ duration: 0.18, ease: 'easeOut' }}
+          className="shrink-0 text-muted-foreground"
+        >
+          <ChevronRightIcon size={13} />
+        </motion.span>
         <p className="label-micro">Protocol Pipeline</p>
-        <p className="label-micro">
-          {finishedOk
-            ? 'Complete'
-            : finishedBad || (submission?.phase === 'failed' && !job)
-              ? 'Halted'
-              : `Stage ${Math.min(reached + 1, STAGES.length)} of ${STAGES.length}`}
-        </p>
-      </div>
+        {!open && summary.length > 0 ? (
+          <span className="min-w-0 flex-1 truncate text-[12px] text-muted-foreground">{summary.join(' · ')}</span>
+        ) : (
+          <span className="flex-1" />
+        )}
+        <p className={`label-micro shrink-0 ${finishedBad ? 'text-danger' : ''}`}>{headline}</p>
+      </button>
 
-      <div className="mt-5 flex flex-col">
-        {STAGES.map((stage, index) => {
-          const state = stateFor(index)
-          const detail = detailFor(stage.key, state)
-          const stamp = stampFor(index)
-          const isLast = index === STAGES.length - 1
-          return (
-            <div key={stage.key} className="flex gap-4">
-              {/* rail */}
-              <div className="flex flex-col items-center">
-                <Node state={state} />
-                {!isLast ? (
-                  <div className="relative my-1 w-px flex-1 bg-white/8">
-                    <motion.div
-                      initial={{ height: 0 }}
-                      animate={{ height: index < reached || finishedOk ? '100%' : 0 }}
-                      transition={{ duration: 0.4, ease: 'easeOut' }}
-                      className="absolute inset-x-0 top-0 bg-accent/50"
-                    />
+      <AnimatePresence initial={false}>
+        {open ? (
+          <motion.div
+            key="stages"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.22, ease: 'easeOut' }}
+            className="overflow-hidden"
+          >
+            <div className="mt-5 flex flex-col">
+              {STAGES.map((stage, index) => {
+                const state = stateFor(index)
+                const detail = detailFor(stage.key, state)
+                const stamp = stampFor(index)
+                const isLast = index === STAGES.length - 1
+                return (
+                  <div key={stage.key} className="flex gap-4">
+                    {/* rail */}
+                    <div className="flex flex-col items-center">
+                      <Node state={state} />
+                      {!isLast ? (
+                        <div className="relative my-1 w-px flex-1 bg-white/8">
+                          <motion.div
+                            initial={{ height: 0 }}
+                            animate={{
+                              height: index < reached || finishedOk ? '100%' : 0,
+                            }}
+                            transition={{ duration: 0.4, ease: 'easeOut' }}
+                            className="absolute inset-x-0 top-0 bg-accent/50"
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {/* content */}
+                    <div className={`min-w-0 flex-1 ${isLast ? 'pb-0' : 'pb-5'}`}>
+                      <div className="flex items-baseline gap-3">
+                        <p
+                          className={`text-[13.5px] font-semibold ${
+                            state === 'pending'
+                              ? 'text-muted-foreground'
+                              : state === 'failed'
+                                ? 'text-danger'
+                                : 'text-foreground'
+                          }`}
+                        >
+                          {stage.label}
+                        </p>
+                        {state === 'active' && elapsed ? (
+                          <span className="ml-auto shrink-0 font-mono text-[11px] text-info">{elapsed}</span>
+                        ) : stamp ? (
+                          <span className="ml-auto shrink-0 font-mono text-[11px] text-muted-foreground">{stamp}</span>
+                        ) : null}
+                      </div>
+
+                      {detail ? (
+                        <motion.div
+                          initial={{ opacity: 0, y: -4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.22 }}
+                          className="mt-2 flex flex-col gap-1"
+                        >
+                          {detail}
+                        </motion.div>
+                      ) : null}
+                    </div>
                   </div>
-                ) : null}
-              </div>
-
-              {/* content */}
-              <div className={`min-w-0 flex-1 ${isLast ? 'pb-0' : 'pb-5'}`}>
-                <div className="flex items-baseline gap-3">
-                  <p
-                    className={`text-[13.5px] font-semibold ${
-                      state === 'pending' ? 'text-muted-foreground' : state === 'failed' ? 'text-danger' : 'text-foreground'
-                    }`}
-                  >
-                    {stage.label}
-                  </p>
-                  {state === 'active' && elapsed ? (
-                    <span className="ml-auto shrink-0 font-mono text-[11px] text-info">{elapsed}</span>
-                  ) : stamp ? (
-                    <span className="ml-auto shrink-0 font-mono text-[11px] text-muted-foreground">{stamp}</span>
-                  ) : null}
-                </div>
-
-                {detail ? (
-                  <motion.div
-                    initial={{ opacity: 0, y: -4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.22 }}
-                    className="mt-2 flex flex-col gap-1"
-                  >
-                    {detail}
-                  </motion.div>
-                ) : null}
-              </div>
+                )
+              })}
             </div>
-          )
-        })}
-      </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   )
 }

@@ -73,7 +73,7 @@ function Sidebar() {
   return (
     <aside className="flex h-screen w-[264px] shrink-0 flex-col border-r border-white/7 bg-black/30">
       <div className="px-6 pt-7 pb-6">
-        <h1 className="font-display text-[22px] font-bold tracking-tight text-foreground">Sovereign AI</h1>
+        <h1 className="font-display text-[19px] font-bold tracking-tight text-foreground">Sovereign AI</h1>
       </div>
 
       <nav className="flex flex-col gap-1 px-3" aria-label="Main navigation">

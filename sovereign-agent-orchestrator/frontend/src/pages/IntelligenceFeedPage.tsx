@@ -193,7 +193,7 @@ function IntelligenceFeedPage() {
               Active Protocol
             </span>
             <span className="h-4 w-px shrink-0 bg-white/12" />
-            <h1 className="truncate font-display text-[22px] leading-none font-medium text-foreground">
+            <h1 className="truncate font-display text-[19px] leading-none font-medium text-foreground">
               {conversation?.title ?? 'New Session'}
             </h1>
           </div>
@@ -213,7 +213,7 @@ function IntelligenceFeedPage() {
               <div className="border-hairline flex h-12 w-12 items-center justify-center rounded-2xl bg-surface">
                 <span className="h-2.5 w-2.5 rounded-full bg-accent" style={{ boxShadow: '0 0 10px var(--color-accent)' }} />
               </div>
-              <h2 className="mt-6 font-display text-[28px] font-medium text-foreground">Protocol Initialized.</h2>
+              <h2 className="mt-6 font-display text-[24px] font-medium text-foreground">Protocol Initialized.</h2>
               <p className="mt-3 max-w-md text-[14px] leading-relaxed text-muted-foreground">
                 Instruct Sovereign Intelligence to analyze documents, search authorized knowledge, or synthesize a deliverable.
               </p>
@@ -237,7 +237,7 @@ function IntelligenceFeedPage() {
                   >
                     <AssistantOrb />
                     <div className="min-w-0 flex-1">
-                      <h3 className="font-display text-[22px] font-medium text-foreground">{turnHeader(index, false)}</h3>
+                      <h3 className="font-display text-[19px] font-medium text-foreground">{turnHeader(index, false)}</h3>
                       <div className="markdown mt-4">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
                       </div>
@@ -285,7 +285,7 @@ function IntelligenceFeedPage() {
                     <div className="min-w-0 flex-1">
                       {!turnPersisted ? (
                         <div className="flex items-center gap-3">
-                          <h3 className="font-display text-[22px] font-medium text-foreground">
+                          <h3 className="font-display text-[19px] font-medium text-foreground">
                             {turnHeader(historyMessages.length, true, job?.status)}
                           </h3>
                           {job ? <StatusPill status={job.status} /> : null}

@@ -40,7 +40,7 @@ function ArtifactsRail({ artifacts, busy }: { artifacts: RailArtifact[]; busy?: 
       <header className="flex shrink-0 items-center justify-between border-b border-white/7 px-6 py-[18px]">
         <div className="flex items-center gap-3">
           <ArtifactsIcon size={18} className="text-accent" />
-          <h2 className="font-display text-[20px] leading-none font-medium text-foreground">Generated Artifacts</h2>
+          <h2 className="font-display text-[17px] leading-none font-medium text-foreground">Generated Artifacts</h2>
         </div>
         <button
           type="button"

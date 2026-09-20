@@ -30,7 +30,12 @@
 
   --font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
-  --font-display: 'Playfair Display', ui-serif, Georgia, 'Times New Roman', serif;
+  /* Was Playfair Display. A serif display face gave headings and -- worse -- stat
+     values a bookish look that read as decoration rather than instrumentation:
+     "0/0 checks passed" set in Georgia-like type next to a monospaced model id.
+     The display face is now the same sans as the body, differentiated by size and
+     weight instead of by family. */
+  --font-display: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
 
   --animate-status-pulse: status-pulse 1.5s ease-in-out infinite;
   --animate-caret-blink: caret-blink 1s step-end infinite;
@@ -91,11 +96,17 @@ button, input, textarea, select {
   color: var(--color-muted-foreground);
 }
 
+/* The display face is the body sans at a larger size, so it needs the negative
+   tracking a display serif got from its own design. */
+.font-display {
+  letter-spacing: -0.02em;
+}
+
 /* Tabular numerals so digits don't jitter as stats poll and update. */
 .stat-number {
   font-family: var(--font-display);
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
 }
 
 /* Thin, dark scrollbars -- the default light track is very loud on this ground. */
@@ -129,7 +140,7 @@ html.motion-paused .animate-status-pulse {
 .markdown > :first-child { margin-top: 0; }
 .markdown > :last-child { margin-bottom: 0; }
 .markdown p { margin: 0 0 14px; }
-.markdown h1, .markdown h2, .markdown h3 { margin: 20px 0 10px; color: var(--color-foreground); line-height: 1.3; font-family: var(--font-display); font-weight: 500; }
+.markdown h1, .markdown h2, .markdown h3 { margin: 20px 0 10px; color: var(--color-foreground); line-height: 1.3; font-family: var(--font-display); font-weight: 600; letter-spacing: -0.01em; }
 .markdown h1 { font-size: 21px; }
 .markdown h2 { font-size: 18px; }
 .markdown h3 { font-size: 15px; }

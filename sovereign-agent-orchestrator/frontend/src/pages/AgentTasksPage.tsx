@@ -82,7 +82,7 @@ function AgentTasksPage() {
       <header className="flex shrink-0 items-center justify-between border-b border-white/7 px-8 py-5">
         <div className="flex items-center gap-3.5">
           <TasksIcon size={20} className="text-accent" />
-          <h1 className="font-display text-[26px] leading-none font-medium text-foreground">Agent Task Oversight</h1>
+          <h1 className="font-display text-[22px] leading-none font-medium text-foreground">Agent Task Oversight</h1>
         </div>
         <button
           type="button"
@@ -103,7 +103,7 @@ function AgentTasksPage() {
 
         <div className="mt-10">
           <div className="flex items-baseline justify-between">
-            <h2 className="font-display text-[22px] font-medium text-foreground">Current Assignments</h2>
+            <h2 className="font-display text-[19px] font-medium text-foreground">Current Assignments</h2>
             <Tabs.Root value={filter} onValueChange={setFilter}>
               <Tabs.List className="flex gap-5">
                 {FILTERS.map((item) => (

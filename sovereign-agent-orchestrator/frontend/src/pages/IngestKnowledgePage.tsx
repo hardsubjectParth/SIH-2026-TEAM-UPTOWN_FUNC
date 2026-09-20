@@ -16,7 +16,7 @@ function IngestKnowledgePage() {
       <header className="flex shrink-0 items-center justify-between border-b border-white/7 px-8 py-[18px]">
         <div className="flex items-center gap-3.5">
           <KnowledgeIcon size={20} className="text-accent" />
-          <h1 className="font-display text-[24px] leading-none font-medium text-foreground">Ingest Knowledge</h1>
+          <h1 className="font-display text-[21px] leading-none font-medium text-foreground">Ingest Knowledge</h1>
         </div>
         <button
           type="button"

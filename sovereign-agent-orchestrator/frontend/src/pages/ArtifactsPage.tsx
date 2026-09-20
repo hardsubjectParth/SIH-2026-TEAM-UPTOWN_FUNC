@@ -41,7 +41,7 @@ function ArtifactsPage() {
       <header className="flex shrink-0 items-center justify-between gap-5 border-b border-white/7 px-8 py-4">
         <div className="flex shrink-0 items-center gap-3.5">
           <ArtifactsIcon size={20} className="text-accent" />
-          <h1 className="font-display text-[24px] leading-none font-medium text-foreground">Generated Artifacts</h1>
+          <h1 className="font-display text-[21px] leading-none font-medium text-foreground">Generated Artifacts</h1>
         </div>
 
         <form onSubmit={submit} className="flex min-w-0 flex-1 items-center justify-end gap-3">
@@ -105,7 +105,7 @@ function ArtifactsPage() {
         ) : null}
 
         <section className={job ? 'mt-12' : ''}>
-          <h2 className="font-display text-[22px] font-medium text-foreground">
+          <h2 className="font-display text-[19px] font-medium text-foreground">
             {job ? 'Other Sessions' : 'Recent Deliverables'}
           </h2>
           <p className="mt-2 text-[13px] text-muted-foreground">
