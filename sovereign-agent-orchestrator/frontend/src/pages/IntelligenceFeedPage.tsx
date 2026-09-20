@@ -11,6 +11,7 @@ import { sendChatMessage, uploadFile } from '../services/api'
 import Composer from '../components/feed/Composer'
 import ActivityTimeline from '../components/feed/ActivityTimeline'
 import ProtocolPipeline from '../components/feed/ProtocolPipeline'
+import type { Submission } from '../components/feed/ProtocolPipeline'
 import MetricsCard from '../components/feed/MetricsCard'
 import ApprovalGate from '../components/feed/ApprovalGate'
 import ArtifactsRail from '../components/feed/ArtifactsRail'
@@ -49,6 +50,7 @@ function IntelligenceFeedPage() {
 
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
   const [pendingTask, setPendingTask] = useState<string | null>(null)
+  const [submission, setSubmission] = useState<Submission | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Perf guardrail: a long-running session shouldn't keep every turn mounted forever.
@@ -94,6 +96,7 @@ function IntelligenceFeedPage() {
     }
     setActiveJobId(null)
     setPendingTask(null)
+    setSubmission(null)
     setVisibleCount(50)
   }, [routeId])
 
@@ -110,16 +113,34 @@ function IntelligenceFeedPage() {
     if (!token) return
     setSubmitting(true)
     setError(null)
+
+    // Show the turn and its pipeline straight away. These used to be set only after
+    // the uploads and POST /chat had all resolved, so pressing send produced no
+    // visible change at all until the job existed -- and with an attachment that
+    // needs OCR, ingest is synchronous and that wait runs into minutes.
+    setActiveJobId(null)
+    setPendingTask(task)
+    setSubmission({
+      task,
+      phase: files.length > 0 ? 'uploading' : 'submitting',
+      uploaded: 0,
+      total: files.length,
+      startedAt: new Date().toISOString(),
+    })
+
     try {
       const uploadedFileIds: string[] = []
       for (const file of files) {
         const uploaded = await uploadFile(file, 'private', token)
         uploadedFileIds.push(uploaded.file_id)
+        setSubmission((current) => (current ? { ...current, uploaded: current.uploaded + 1 } : current))
       }
+      setSubmission((current) => (current ? { ...current, phase: 'submitting' } : current))
+
       const isNewConversation = !routeId
       const response = await sendChatMessage(task, token, routeId, uploadedFileIds)
+      setSubmission((current) => (current ? { ...current, phase: 'accepted' } : current))
       setActiveJobId(response.data.job_id)
-      setPendingTask(task)
       if (isNewConversation) {
         globalMutate(['conversations', token])
         selfNavigated.current = response.data.conversation_id
@@ -128,7 +149,11 @@ function IntelligenceFeedPage() {
         mutateConversation()
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Unable to submit task')
+      const message = cause instanceof Error ? cause.message : 'Unable to submit task'
+      setError(message)
+      // Keep the turn on screen rather than making it vanish: the pipeline marks
+      // stage one failed and says why, which is more use than an empty feed.
+      setSubmission((current) => (current ? { ...current, phase: 'failed', error: message } : current))
     } finally {
       setSubmitting(false)
     }
@@ -146,7 +171,8 @@ function IntelligenceFeedPage() {
   const allHistoryMessages = hideTrailingUser ? messages.slice(0, -1) : messages
   const hiddenCount = Math.max(0, allHistoryMessages.length - visibleCount)
   const historyMessages = hiddenCount > 0 ? allHistoryMessages.slice(-visibleCount) : allHistoryMessages
-  const busy = Boolean(job && !TERMINAL.has(job.status))
+  const submissionInFlight = submission?.phase === 'uploading' || submission?.phase === 'submitting'
+  const busy = Boolean(submissionInFlight || (job && !TERMINAL.has(job.status)))
 
   // Once the finished turn lands in the conversation, history renders BOTH sides of
   // it in the right order. The live panel must then stop repeating the prompt and the
@@ -262,7 +288,7 @@ function IntelligenceFeedPage() {
                           <h3 className="font-display text-[22px] font-medium text-foreground">
                             {turnHeader(historyMessages.length, true, job?.status)}
                           </h3>
-                          <StatusPill status={job?.status ?? 'queued'} />
+                          {job ? <StatusPill status={job.status} /> : null}
                         </div>
                       ) : null}
 
@@ -277,7 +303,7 @@ function IntelligenceFeedPage() {
                       {/* Live stage readout first -- it is the thing worth watching while
                           the job runs. The flat event log stays available underneath for
                           debugging, collapsed by default. */}
-                      <ProtocolPipeline events={events} job={job} />
+                      <ProtocolPipeline events={events} job={job} submission={submission} />
                       {job ? <MetricsCard job={job} /> : null}
                       {job?.status === 'awaiting_approval' ? <ApprovalGate job={job} onResolved={() => {}} /> : null}
                       {events.length > 0 ? (

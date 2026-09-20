@@ -11,6 +11,20 @@ import { CheckIcon, XIcon } from '../shell/icons'
 
 type StageState = 'pending' | 'active' | 'done' | 'failed'
 
+/* The client-side half of the first stage. A job only exists once POST /chat returns,
+   and getting there means uploading every attachment first -- an image whose text
+   Tesseract cannot read runs a vision-OCR pass during ingest, which is synchronous and
+   can take minutes. Reporting only backend events left that entire window blank, so the
+   pane appeared long after the prompt was sent and looked like nothing had happened. */
+export type Submission = {
+  task: string
+  phase: 'uploading' | 'submitting' | 'accepted' | 'failed'
+  uploaded: number
+  total: number
+  startedAt: string
+  error?: string | null
+}
+
 const STAGES = [
   { key: 'received', label: 'Task Received' },
   { key: 'routing', label: 'Model Selection' },
@@ -20,10 +34,14 @@ const STAGES = [
   { key: 'delivery', label: 'Delivery' },
 ] as const
 
-// Which stage each emitted event belongs to. Anything not listed (status_changed,
-// model_response) is deliberately ignored -- it carries no stage transition.
+// Which stage each emitted event belongs to. `status_changed` and `model_response` are
+// deliberately absent: they duplicate transitions the other events already carry.
+// `worker_error` is absent for a different reason -- it can arrive at any stage, so it
+// halts wherever the run had reached rather than advancing it (see `halted` below).
 const EVENT_STAGE: Record<string, number> = {
   job_created: 0,
+  images_attached: 0,
+  attachment_unreadable: 0,
   model_selected: 1,
   model_fallback: 1,
   model_error: 1,
@@ -41,6 +59,7 @@ const EVENT_STAGE: Record<string, number> = {
   verification_failed: 4,
   artifact_created: 5,
   job_completed: 5,
+  job_cancelled: 5,
 }
 
 const TERMINAL_OK = new Set(['done'])
@@ -106,7 +125,15 @@ function Row({ label, value }: { label: string; value: ReactNode }) {
   )
 }
 
-function ProtocolPipeline({ events, job }: { events: JobEvent[]; job?: Job }) {
+function ProtocolPipeline({
+  events,
+  job,
+  submission,
+}: {
+  events: JobEvent[]
+  job?: Job
+  submission?: Submission | null
+}) {
   const byType = (type: string) => events.filter((event) => event.type === type)
   const firstOf = (type: string) => byType(type)[0]
   const lastOf = (type: string) => byType(type).at(-1)
@@ -120,9 +147,13 @@ function ProtocolPipeline({ events, job }: { events: JobEvent[]; job?: Job }) {
   const status = job?.status
   const finishedOk = status ? TERMINAL_OK.has(status) : false
   const finishedBad = status ? TERMINAL_BAD.has(status) : false
-  const halted = Boolean(lastOf('model_error')) || Boolean(job?.error)
+  const workerError = lastOf('worker_error')
+  const halted = Boolean(lastOf('model_error')) || Boolean(workerError) || Boolean(job?.error)
 
   function stateFor(index: number): StageState {
+    // A submission that never reached the orchestrator fails on stage one; the
+    // later stages stay pending because they genuinely never ran.
+    if (submission?.phase === 'failed' && !job) return index === 0 ? 'failed' : 'pending'
     if (finishedOk) return 'done'
     if (index < reached) return 'done'
     if (index > reached) return 'pending'
@@ -152,14 +183,60 @@ function ProtocolPipeline({ events, job }: { events: JobEvent[]; job?: Job }) {
 
   const artifacts = job?.artifacts ?? []
 
+  const imagesEvent = lastOf('images_attached')
+  const attachedImages = (imagesEvent?.data.names as string[] | undefined) ?? []
+  // The orchestrator enlarges an undersized image before the model sees it, because a
+  // small input is allotted few visual tokens and read coarsely. Worth showing: it is
+  // the difference between a drawing being legible to the model and not.
+  const resizeNotes = (imagesEvent?.data.resized as string[] | undefined) ?? []
+  const unreadable = byType('attachment_unreadable')
+
   function detailFor(key: string, state: StageState): ReactNode {
     if (state === 'pending') return null
 
     if (key === 'received') {
-      return <Row label="Prompt" value={<span className="line-clamp-2">{job?.task ?? '—'}</span>} />
+      const attachmentsPending = submission && submission.total > 0 && submission.phase === 'uploading'
+      return (
+        <>
+          <Row label="Prompt" value={<span className="line-clamp-2">{job?.task ?? submission?.task ?? '—'}</span>} />
+          {submission && submission.total > 0 ? (
+            <Row label="Attachments" value={`${submission.uploaded} of ${submission.total} uploaded`} />
+          ) : null}
+          {attachedImages.length > 0 ? (
+            <Row label="Images" value={<span className="font-mono">{attachedImages.join(', ')}</span>} />
+          ) : null}
+          {resizeNotes.map((note) => (
+            <Row key={note} label="Resized" value={<span className="font-mono text-[11.5px]">{note}</span>} />
+          ))}
+          {unreadable.map((event) => (
+            <Row
+              key={String(event.data.name)}
+              label="Unreadable"
+              value={<span className="text-warning">{String(event.data.name)} could not be read and was skipped</span>}
+            />
+          ))}
+          {attachmentsPending ? (
+            <Row
+              label="Status"
+              value={
+                <span className="text-info">
+                  Uploading and indexing — a scan with no readable text is transcribed by the vision model here.
+                </span>
+              }
+            />
+          ) : submission?.phase === 'submitting' ? (
+            <Row label="Status" value={<span className="text-info">Submitting to the orchestrator…</span>} />
+          ) : submission?.phase === 'failed' ? (
+            <Row label="Error" value={<span className="text-danger">{submission.error ?? 'Submission failed'}</span>} />
+          ) : null}
+        </>
+      )
     }
 
     if (key === 'routing') {
+      if (workerError) {
+        return <Row label="Error" value={<span className="text-danger">{String(workerError.data.error ?? 'The worker failed')}</span>} />
+      }
       if (modelError) return <Row label="Error" value={<span className="text-danger">{String(modelError.data.error ?? 'Model call failed')}</span>} />
       if (!routing) return <Row label="Status" value="Selecting a capability-matched model…" />
       const awaitingModel = state === 'active'
@@ -189,7 +266,13 @@ function ProtocolPipeline({ events, job }: { events: JobEvent[]; job?: Job }) {
     }
 
     if (key === 'planning') {
-      if (!planSteps.length) return <Row label="Status" value="Drafting the execution plan…" />
+      if (!planSteps.length) {
+        return state === 'active' ? (
+          <Row label="Status" value="Drafting the execution plan…" />
+        ) : (
+          <Row label="Plan" value="No tool steps required — the model answered directly." />
+        )
+      }
       return (
         <>
           <Row label="Steps" value={`${planSteps.length}`} />
@@ -212,7 +295,13 @@ function ProtocolPipeline({ events, job }: { events: JobEvent[]; job?: Job }) {
     }
 
     if (key === 'execution') {
-      if (!toolStarts.length) return <Row label="Status" value="Waiting for the first tool call…" />
+      if (!toolStarts.length) {
+        return state === 'active' ? (
+          <Row label="Status" value="Waiting for the first tool call…" />
+        ) : (
+          <Row label="Tools" value="None called for this task." />
+        )
+      }
       return (
         <>
           {approval && job?.status === 'awaiting_approval' ? (
@@ -244,8 +333,19 @@ function ProtocolPipeline({ events, job }: { events: JobEvent[]; job?: Job }) {
     }
 
     if (key === 'verification') {
-      if (!verification) return <Row label="Status" value="Checking the result against the task…" />
+      if (!verification) {
+        return state === 'active' ? (
+          <Row label="Status" value="Checking the result against the task…" />
+        ) : (
+          <Row label="Checks" value="None run." />
+        )
+      }
       const passed = checks.filter(([, ok]) => ok).length
+      // A direct answer carries a passing verification with an empty checklist --
+      // reporting that as "0/0 passed" reads like a failure rather than a no-op.
+      if (!checks.length) {
+        return <Row label="Checks" value="No artifact checks apply — the answer was returned directly." />
+      }
       return (
         <>
           <Row
@@ -299,15 +399,23 @@ function ProtocolPipeline({ events, job }: { events: JobEvent[]; job?: Job }) {
 
   // The active stage runs from its own first event, or -- before any event for it
   // has landed -- from the last event we did see.
-  const activeSince = rawStampFor(reached) ?? events.at(-1)?.timestamp
-  const elapsed = useElapsed(activeSince, !finishedOk && !finishedBad && events.length > 0)
+  const activeSince = rawStampFor(reached) ?? events.at(-1)?.timestamp ?? submission?.startedAt
+  const submissionInFlight = submission?.phase === 'uploading' || submission?.phase === 'submitting'
+  const elapsed = useElapsed(
+    activeSince,
+    !finishedOk && !finishedBad && submission?.phase !== 'failed' && (events.length > 0 || Boolean(submissionInFlight)),
+  )
 
   return (
     <div className="border-hairline mt-4 rounded-2xl bg-surface px-5 py-5">
       <div className="flex items-center justify-between">
         <p className="label-micro">Protocol Pipeline</p>
         <p className="label-micro">
-          {finishedOk ? 'Complete' : finishedBad ? 'Halted' : `Stage ${Math.min(reached + 1, STAGES.length)} of ${STAGES.length}`}
+          {finishedOk
+            ? 'Complete'
+            : finishedBad || (submission?.phase === 'failed' && !job)
+              ? 'Halted'
+              : `Stage ${Math.min(reached + 1, STAGES.length)} of ${STAGES.length}`}
         </p>
       </div>
 
