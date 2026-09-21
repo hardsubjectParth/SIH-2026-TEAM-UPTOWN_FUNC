@@ -1037,3 +1037,21 @@ def test_a_transcription_buried_in_reasoning_is_kept_not_discarded(tmp_path):
     out = asyncio.run(rag._vision_chat(_Client(), {}))
     assert 'DRAWING 4471' in out and 'collars at A are 3/8' in out
     assert '<think>' not in out, 'the markers go even when the text stays'
+
+
+def test_json_columns_decode_from_either_backend():
+    """psycopg returns JSONB already decoded; SQLite returns the TEXT it stored.
+
+    Calling json.loads on the decoded dict raised "the JSON object must be str, bytes
+    or bytearray, not dict" -- visible only on PostgreSQL, and only via search_sync,
+    because the async path returns from the pgvector branch before reaching it.
+    """
+    from app.rag.service import _decode_json
+
+    assert _decode_json({'tenant_id': 'acme'}, {}) == {'tenant_id': 'acme'}   # postgres
+    assert _decode_json('{"tenant_id": "acme"}', {}) == {'tenant_id': 'acme'}  # sqlite
+    assert _decode_json([0.1, 0.2], []) == [0.1, 0.2]
+    assert _decode_json('[0.1, 0.2]', []) == [0.1, 0.2]
+    assert _decode_json(None, {}) == {}
+    assert _decode_json('', {}) == {}
+    assert _decode_json('   ', []) == []

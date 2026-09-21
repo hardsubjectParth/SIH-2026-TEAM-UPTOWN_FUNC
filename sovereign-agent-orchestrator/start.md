@@ -79,6 +79,41 @@ Frontend `.env` (already present in this checkout, `frontend/.env`):
 VITE_API_BASE_URL=http://localhost:8080/api/v1
 ```
 
+## 0b. PostgreSQL + pgvector (optional; SQLite is the default)
+
+Four databases, one control plane and one per RAG tier. Order matters: the `vector`
+extension needs a superuser, but the schema must be applied **as the owning role**, or
+the app connects as a role that cannot index its own tables.
+
+```bash
+brew install postgresql@17 pgvector
+brew services start postgresql@17
+export PATH="/opt/homebrew/opt/postgresql@17/bin:$PATH"
+
+# roles and databases
+psql -d postgres -c "CREATE ROLE orchestrator LOGIN PASSWORD '...'"   # repeat for
+psql -d postgres -c "CREATE ROLE rag_admin    LOGIN PASSWORD '...'"   # rag_higher
+psql -d postgres -c "CREATE ROLE rag_lower    LOGIN PASSWORD '...'"   # and rag_higher
+psql -d postgres -c "CREATE DATABASE orchestrator OWNER orchestrator"  # and rag_* likewise
+
+# extension as superuser, schema as the owner
+for db in rag_admin rag_higher rag_lower; do psql -d $db -c "CREATE EXTENSION IF NOT EXISTS vector"; done
+PGPASSWORD=... psql -h 127.0.0.1 -U orchestrator -d orchestrator -f migrations/core/001_operational.sql
+PGPASSWORD=... psql -h 127.0.0.1 -U rag_admin    -d rag_admin    -f migrations/tier/001_initial_pgvector.sql
+# ... rag_higher, rag_lower the same
+```
+
+The tier migration defaults to `vector(1024)` for bge-m3. For a 768-dimension embedder
+apply it with `-v embedding_dim=768` and set `RAG_EMBEDDING_DIMENSIONS` to match, or
+every chunk insert fails on a dimension the error message does not name.
+
+Then set **all four** URLs in `.env` -- see the warning in section 0 about what setting
+`DATABASE_URL` alone does -- and `REQUIRE_POSTGRES=true` so the service refuses to start
+if any of them silently falls back to SQLite.
+
+Check with the one-liner in section 0; expect `distinct: 4`. Retrieval should then
+report `pgvector+local_rerank` rather than `embedding+local_rerank`.
+
 ## 1. Start Ollama
 
 ```bash

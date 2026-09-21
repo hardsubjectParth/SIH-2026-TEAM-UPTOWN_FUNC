@@ -32,6 +32,21 @@ def _display_name(path, metadata=None):
     return (metadata or {}).get('source_name') or _UPLOAD_PREFIX.sub('', Path(path).name)
 
 
+def _decode_json(value, default):
+    """Read a JSON column from either backend.
+
+    psycopg hands back JSONB already decoded, SQLite hands back the TEXT it stored.
+    Calling json.loads on the decoded dict raised "the JSON object must be str, bytes
+    or bytearray, not dict" -- which only ever surfaced on PostgreSQL, and only on the
+    synchronous search path, because the async one returns before reaching it.
+    """
+    if value is None:
+        return default
+    if isinstance(value, (dict, list)):
+        return value
+    return json.loads(value) if str(value).strip() else default
+
+
 def _ranges(numbers):
     """Compact a page list for a human: [6,7,8,11] -> "6-8, 11"."""
     out, start, previous = [], None, None
@@ -448,12 +463,12 @@ class RagService:
         scored = []
         query_words = set(re.findall(r'\w+', query.lower()))
         for chunk_id, document_id, content, embedding, chunk_metadata, name in rows:
-            item_metadata = json.loads(chunk_metadata or '{}')
+            item_metadata = _decode_json(chunk_metadata, {})
             if metadata and any(item_metadata.get(key) != value for key, value in metadata.items()):
                 continue
             if file_ids is not None and item_metadata.get('file_id') not in file_ids:
                 continue
-            score = self._cosine(query_vector, json.loads(embedding)) if query_vector and embedding else self._lexical(query_words, content)
+            score = self._cosine(query_vector, _decode_json(embedding, [])) if query_vector and embedding else self._lexical(query_words, content)
             scored.append({'chunk_id': chunk_id, 'document_id': document_id, 'source': name, 'content': content, 'score': round(score, 6), 'metadata': item_metadata, 'retrieval_method': 'embedding' if query_vector and embedding else 'lexical'})
         return self._rerank(query, scored, top_k)
 
