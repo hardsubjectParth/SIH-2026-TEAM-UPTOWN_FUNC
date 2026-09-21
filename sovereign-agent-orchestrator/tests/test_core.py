@@ -875,3 +875,165 @@ def test_attached_images_are_capped_to_fit_the_context_window(tmp_path):
     # missing pages did not exist.
     prompt = orchestrator._system_prompt('general', images, omitted)
     assert 'could not be included' in prompt
+
+
+def test_the_pdf_vision_pass_is_bounded_by_pages_and_a_total_budget(tmp_path, monkeypatch):
+    """httpx times out per request, so a per-page bound multiplied by the page count:
+    a twenty-page scan could hold an upload open for an hour."""
+    import asyncio
+    import pymupdf
+    from app.rag.service import RagService
+
+    document = pymupdf.open()
+    source = pymupdf.open()
+    sheet = source.new_page()
+    sheet.insert_text((60, 120), 'SCANNED', fontsize=28)
+    pixmap = sheet.get_pixmap(dpi=90)
+    source.close()
+    for _ in range(12):
+        page = document.new_page()
+        page.insert_image(pymupdf.Rect(0, 0, 595, 842), pixmap=pixmap)
+    scan = tmp_path / 'long_scan.pdf'
+    document.save(scan)
+    document.close()
+
+    monkeypatch.setenv('OCR_MAX_VISION_PAGES', '3')
+    rag = RagService(f'sqlite:///{tmp_path / "r.db"}')
+    assert rag.max_vision_pages == 3
+
+    # Every page is a picture, so all twelve are candidates.
+    assert rag._pdf_pages_without_text(scan)[1] == 12
+    assert len(rag._pdf_pages_without_text(scan)[0]) == 12
+
+    calls = []
+
+    async def _chat(client, payload, timeout=None):
+        calls.append(timeout)
+        return 'PAGE TEXT that is long enough to read as real words here'
+
+    rag._vision_chat = _chat
+    out = asyncio.run(rag._vision_extract_pdf(scan))
+
+    assert len(calls) == 3, 'the page cap must stop the pass'
+    assert 'Pages 4-12 were not transcribed' in out, 'and say which pages were skipped'
+    assert all(t is not None for t in calls), 'each request bounded by the remaining budget'
+
+
+def test_a_scanned_pdf_is_judged_on_its_text_layer_not_its_ocr_noise(tmp_path):
+    """156 characters of Tesseract noise passed the old "under 24 chars" test, so a
+    scanned drawing was indexed as gibberish and the vision model never ran."""
+    import asyncio
+    import pymupdf
+    from app.rag.service import RagService
+
+    source = pymupdf.open()
+    sheet = source.new_page()
+    sheet.insert_text((60, 120), 'DRAWING 4471', fontsize=28)
+    pixmap = sheet.get_pixmap(dpi=110)
+    source.close()
+    document = pymupdf.open()
+    document.new_page().insert_image(pymupdf.Rect(0, 0, 595, 842), pixmap=pixmap)
+    scan = tmp_path / 'scan.pdf'
+    document.save(scan)
+    document.close()
+
+    rag = RagService(f'sqlite:///{tmp_path / "r.db"}')
+    # The real Tesseract output for this drawing, verbatim.
+    rag._ocr_pdf = lambda path: '[Page 1]\nfone Ge - 3 Ss 6jf ut "Y9DQ Us AUST] AL SRUOAF UG 9 sj22/onf 2 ssogr'
+
+    async def _vision(path, only_pages=None):
+        assert only_pages == [1], 'only the pages that are pictures'
+        return '[Page 1]\nDRAWING 4471 SCALE 1:2 MATERIAL EN8 STEEL OVERALL LENGTH 120 MM'
+
+    rag._vision_extract_pdf = _vision
+    asyncio.run(rag.ingest(scan))
+
+    hits = asyncio.run(rag.search('DRAWING'))
+    assert hits, 'the scan should be findable'
+    assert 'DRAWING 4471' in hits[0]['content']
+    assert 'Y9DQ' not in hits[0]['content'], 'OCR noise must not be what gets indexed'
+
+
+def test_a_text_layer_pdf_never_triggers_a_vision_pass(tmp_path):
+    """A readable PDF costs nothing to index and must not pay ~1-2 minutes a page."""
+    import asyncio
+    import pymupdf
+    from app.rag.service import RagService
+
+    document = pymupdf.open()
+    page = document.new_page()
+    page.insert_textbox(pymupdf.Rect(60, 60, 540, 760), 'Pump P-101 inspection interval. ' * 40, fontsize=11)
+    readable = tmp_path / 'report.pdf'
+    document.save(readable)
+    document.close()
+
+    rag = RagService(f'sqlite:///{tmp_path / "r.db"}')
+    assert rag._pdf_pages_without_text(readable)[0] == []
+
+    async def _never(path, only_pages=None):
+        raise AssertionError('a text-layer PDF must not be sent to the vision model')
+
+    rag._vision_extract_pdf = _never
+    asyncio.run(rag.ingest(readable))
+    assert asyncio.run(rag.search('inspection interval'))
+
+
+def test_indexed_ocr_does_not_contain_the_models_own_reasoning(tmp_path):
+    """Qwen3-VL ignores `think: false` and writes <think> straight into content.
+
+    Indexing a transcription wrapped in the model's deliberation pollutes every later
+    search against that document.
+    """
+    import asyncio
+    from app.rag.service import RagService
+
+    class _Response:
+        status_code = 200
+        text = ''
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            # The answer has to clear the usability floor, as a real transcription does.
+            return {'message': {'content': '<think>Let me look at the title block.</think>\n\n'
+                                           'DRAWING 4471 SCALE 1:2 MATERIAL EN8 STEEL OVERALL LENGTH 120 MM'}}
+
+    class _Client:
+        async def post(self, url, json=None, **kwargs):
+            return _Response()
+
+    rag = RagService(f'sqlite:///{tmp_path / "r.db"}')
+    out = asyncio.run(rag._vision_chat(_Client(), {}))
+    assert out == 'DRAWING 4471 SCALE 1:2 MATERIAL EN8 STEEL OVERALL LENGTH 120 MM'
+    assert 'Let me look' not in out, 'the reasoning goes when there is a real answer'
+
+
+def test_a_transcription_buried_in_reasoning_is_kept_not_discarded(tmp_path):
+    """On a dense page this model often spends the whole budget reasoning and writes no
+    answer -- measured at 8,491 characters of thinking and zero of content. The text it
+    read off the page is in that reasoning, so stripping it indexes nothing."""
+    import asyncio
+    from app.rag.service import RagService
+
+    buried = ('<think>Let me read the title block. It says DRAWING 4471, scale 1:2, '
+              'material EN8 steel, and the collars at A are 3/8 by 1/2 inches.')
+
+    class _Response:
+        status_code = 200
+        text = ''
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {'message': {'content': '', 'thinking': buried}}
+
+    class _Client:
+        async def post(self, url, json=None, **kwargs):
+            return _Response()
+
+    rag = RagService(f'sqlite:///{tmp_path / "r.db"}')
+    out = asyncio.run(rag._vision_chat(_Client(), {}))
+    assert 'DRAWING 4471' in out and 'collars at A are 3/8' in out
+    assert '<think>' not in out, 'the markers go even when the text stays'

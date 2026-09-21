@@ -1,6 +1,7 @@
 import csv
 import base64
 import hashlib
+import time
 import os
 import json
 import math
@@ -9,6 +10,11 @@ import uuid
 from pathlib import Path
 
 import httpx
+
+from app.models.adapter import _strip_reasoning
+
+# Removes the markers while keeping what is between them.
+_THINK_TAGS = re.compile(r'</?think>', re.I)
 from docx import Document
 from openpyxl import load_workbook
 from pypdf import PdfReader
@@ -24,6 +30,22 @@ _UPLOAD_PREFIX = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9
 
 def _display_name(path, metadata=None):
     return (metadata or {}).get('source_name') or _UPLOAD_PREFIX.sub('', Path(path).name)
+
+
+def _ranges(numbers):
+    """Compact a page list for a human: [6,7,8,11] -> "6-8, 11"."""
+    out, start, previous = [], None, None
+    for number in sorted(numbers):
+        if start is None:
+            start = previous = number
+        elif number == previous + 1:
+            previous = number
+        else:
+            out.append(str(start) if start == previous else f'{start}-{previous}')
+            start = previous = number
+    if start is not None:
+        out.append(str(start) if start == previous else f'{start}-{previous}')
+    return ', '.join(out)
 
 
 def _no_text_marker(name):
@@ -66,13 +88,23 @@ class RagService:
         # measured at 393s on an 8B vision model here, so this will not always finish;
         # when it doesn't, ingest() falls back to an honest marker instead of noise.
         self.vision_timeout = int(os.getenv('OCR_VISION_TIMEOUT_SECONDS', '180'))
+        # The budget above is for the WHOLE document, not per page. httpx applies a
+        # timeout per request, so a per-page bound multiplied by the page count: a
+        # twenty-page scan could hold an upload open for an hour. Pages are also
+        # capped, because transcribing page 40 of a scan nobody will search is not
+        # worth making the uploader wait. Measured here: ~51s for a typed page, ~111s
+        # for a dense engineering drawing.
+        self.max_vision_pages = int(os.getenv('OCR_MAX_VISION_PAGES', '5'))
         # Qwen3-VL is a thinking model and, measured here, ignores `think: false` on
         # this path -- it produced 2,937 characters of chain-of-thought anyway. It is
         # still sent for models that do honour it, but the transcription budget has to
         # assume thinking happens: capped at 1024 the reasoning consumed the entire
         # allowance and the call returned empty content. The budget below leaves room
         # for the answer after the thinking, and _vision_chat salvages the reasoning
-        # text if a cap is still hit. The temperature is deliberately not lower: at 0.3
+        # text if a cap is still hit. Deliberately 4096 and not the 8192 the chat path
+        # uses: measured on a dense drawing, 4096 completes a page in ~111s and 8192
+        # pushes it past the 180s document budget, so the page times out and nothing is
+        # indexed at all. A wider budget is not better when there is a deadline. The temperature is deliberately not lower: at 0.3
         # this model fell into a repetition loop on a dense drawing and never escaped.
         self._vision_options = {
             'think': False,
@@ -176,6 +208,24 @@ class RagService:
             return f'[OCR unavailable: {exc}]'
 
     @staticmethod
+    def _pdf_pages_without_text(path, min_chars=200):
+        """``(page numbers whose text layer is too thin to be real text, page count)``.
+
+        Judging the OCR *output* instead was unreliable in both directions: a page of
+        tabular figures trips the noise heuristic, while several pages of Tesseract
+        noise add up to something that looks substantial. The text layer is the thing
+        actually being asked about, and reading it is nearly free.
+        """
+        import pymupdf
+        document = pymupdf.open(str(path))
+        try:
+            return ([index + 1 for index in range(document.page_count)
+                     if len(re.sub(r'\s+', '', document.load_page(index).get_text() or '')) < min_chars],
+                    document.page_count)
+        finally:
+            document.close()
+
+    @staticmethod
     def _pdf_page_images(path, dpi=200):
         """Yield (page_number, PNG bytes) for each page of a PDF, rendered locally."""
         import pymupdf
@@ -201,14 +251,34 @@ class RagService:
         except Exception as exc:
             return f'[OCR unavailable: {exc}]'
 
-    async def _vision_extract_pdf(self, path):
+    async def _vision_extract_pdf(self, path, only_pages=None):
+        """Transcribe a PDF's picture pages within one bounded budget.
+
+        Stops at max_vision_pages or when vision_timeout for the document is spent,
+        whichever comes first, and records which pages were left untranscribed so the
+        index does not imply the whole document was read.
+        """
         try:
             import base64 as _b64
-            pages = []
+            wanted = set(only_pages) if only_pages is not None else None
+            deadline = time.monotonic() + self.vision_timeout
+            pages, skipped = [], []
             async with httpx.AsyncClient(timeout=self.vision_timeout) as client:
                 for number, png in self._pdf_page_images(path):
+                    if wanted is not None and number not in wanted:
+                        continue
+                    remaining = deadline - time.monotonic()
+                    # 15s is below any observed single-page time, so starting a page
+                    # with less than that left only guarantees a wasted timeout.
+                    if len(pages) >= self.max_vision_pages or remaining < 15:
+                        skipped.append(number)
+                        continue
                     payload = {'model': self.vision_model, 'stream': False, 'keep_alive': self.keep_alive, **self._vision_options, 'messages': [{'role': 'user', 'content': 'Transcribe all visible text exactly, including handwritten text where legible. Return only the transcription.', 'images': [_b64.b64encode(png).decode('ascii')]}]}
-                    pages.append(f'[Page {number}]\n' + await self._vision_chat(client, payload))
+                    pages.append(f'[Page {number}]\n' + await self._vision_chat(client, payload, timeout=remaining))
+            if skipped:
+                pages.append(f'[Pages {_ranges(skipped)} were not transcribed: the OCR budget '
+                             f'({self.vision_timeout}s / {self.max_vision_pages} pages) was reached. '
+                             'Ask about these pages directly -- they are sent to the vision model with the task.]')
             return '\n'.join(pages)
         except Exception as exc:
             return f'[OCR unavailable: install Tesseract or configure Ollama vision: {exc}]'
@@ -260,10 +330,24 @@ class RagService:
                     vision_text if not self._ocr_is_unusable(vision_text)
                     else _no_text_marker(_display_name(path, metadata))
                 )
-            elif suffix == '.pdf' and ('[OCR unavailable:' in extracted_text or len(re.sub(r'\s+', '', extracted_text)) < 24):
-                vision_text = await self._vision_extract_pdf(path)
-                if len(re.sub(r'\s+', '', vision_text)) > len(re.sub(r'\s+', '', extracted_text)):
-                    extracted_text = vision_text
+            elif suffix == '.pdf':
+                # Which pages are pictures is decided by the text layer, not by how the
+                # OCR output looks. The old test -- "[OCR unavailable:] or under 24
+                # characters" -- passed 156 characters of Tesseract noise, so a scanned
+                # drawing was indexed as gibberish and the vision model never ran on it.
+                scanned, page_count = self._pdf_pages_without_text(path)
+                if scanned:
+                    vision_text = await self._vision_extract_pdf(path, only_pages=scanned)
+                    if not self._ocr_is_unusable(vision_text):
+                        # extract() only falls back to Tesseract when the WHOLE document is
+                        # thin, so a mixed PDF still returns its real text layer and that is
+                        # worth keeping beside the transcription. When every page is a
+                        # picture, what extract() returned is the Tesseract noise this fix
+                        # exists to get rid of -- replace it rather than concatenating it.
+                        extracted_text = (
+                            vision_text if len(scanned) == page_count
+                            else extracted_text + '\n' + vision_text
+                        )
         chunks = self._chunks(extracted_text)
         document_id = str(uuid.uuid4())
         vectors = [await self._embed(chunk) for chunk in chunks]
@@ -295,19 +379,32 @@ class RagService:
                 db.execute(text('INSERT INTO rag_chunks(id,document_id,chunk_index,content,embedding,metadata) VALUES(:id,:document,:index,:content,NULL,' + ('CAST(:metadata AS JSONB)' if self.is_postgres else ':metadata') + ')'), {'id': str(uuid.uuid4()), 'document': document_id, 'index': index, 'content': chunk, 'metadata': json.dumps(metadata)})
         return {'document_id': document_id, 'name': _display_name(path, metadata), 'chunks': len(chunks), 'embedded': 0}
 
-    async def _vision_chat(self, client, payload):
+    async def _vision_chat(self, client, payload, timeout=None):
         """POST one vision request, retrying without `think` for models that reject it."""
-        response = await client.post(self.vision_url, json=payload)
+        extra = {'timeout': timeout} if timeout else {}
+        response = await client.post(self.vision_url, json=payload, **extra)
         if response.status_code == 400 and 'think' in response.text.lower():
             payload = {k: v for k, v in payload.items() if k != 'think'}
-            response = await client.post(self.vision_url, json=payload)
+            response = await client.post(self.vision_url, json=payload, **extra)
         response.raise_for_status()
         message = response.json().get('message', {})
         content = (message.get('content') or '').strip()
         # A thinking model that exhausts num_predict before it starts answering returns
         # empty content with the reasoning intact. That reasoning contains the text it
         # read off the page, so it beats indexing nothing. Same salvage as OllamaAdapter.
-        return content or (message.get('thinking') or '')
+        # Qwen3-VL also ignores `think: false` and writes <think> blocks straight into
+        # content, and indexing a transcription wrapped in the model's own deliberation
+        # pollutes every later search -- so prefer the answer with the reasoning removed.
+        #
+        # But on a dense page this model frequently spends the whole budget reasoning and
+        # never writes an answer at all (measured: 8,491 characters of thinking, zero of
+        # content), and the transcription it read off the page is in that reasoning. When
+        # stripping leaves nothing worth indexing, keep the reasoning and drop only the
+        # tags: imperfect text that contains the drawing's callouts beats clean text that
+        # contains nothing.
+        raw = content or (message.get('thinking') or '')
+        cleaned = _strip_reasoning(raw)
+        return cleaned if not self._ocr_is_unusable(cleaned) else _THINK_TAGS.sub('', raw).strip()
 
     async def _vision_extract(self, path):
         try:
