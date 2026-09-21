@@ -39,6 +39,8 @@ class State(TypedDict, total=False):
 
 
 _FENCE = re.compile(r'```([\w+.\-]*)\n(.*?)```', re.S)
+# The opening half only, for a block the model never got to close.
+_OPEN_FENCE = re.compile(r'```([\w+.\-]*)\n')
 _CODE_EXT = {
     'python': '.py', 'py': '.py', 'javascript': '.js', 'js': '.js', 'typescript': '.ts',
     'ts': '.ts', 'bash': '.sh', 'sh': '.sh', 'shell': '.sh', 'json': '.json', 'yaml': '.yml',
@@ -107,6 +109,20 @@ _UPSCALE_BELOW_PIXELS = 1_200_000
 # byte-identical output, while 0.6 scored 6/10 and 7/10 and flipped a `150` to `158`
 # between runs. High temperature was buying variance, not robustness.
 _VISION_CHAT_OPTIONS = {'num_predict': 8192, 'temperature': 0.2}
+
+# Generation budget per task type. The default 1536 tokens is ample for a chat answer
+# and nowhere near enough for one that carries a file: a "function plus a unit test"
+# request came back at 4,931 characters and was still cut off mid-expression, leaving
+# an unterminated ``` fence. _code_blocks then matched nothing, the plan had no source
+# file to run, `code_executed` failed, and the job spent all three iterations
+# re-planning into the same wall -- seven minutes to produce a truncated .md file.
+_TASK_CHAT_OPTIONS = {
+    'coding': {'num_predict': 6144},
+    'document_workflow': {'num_predict': 3072},
+    'presentation': {'num_predict': 3072},
+    'spreadsheet': {'num_predict': 3072},
+    'calculation': {'num_predict': 3072},
+}
 
 
 def _fit_for_vision(data):
@@ -279,7 +295,9 @@ class Orchestrator:
         messages.append(message)
 
         adapter = self._adapter_for(j['routing'])
-        options = _VISION_CHAT_OPTIONS if images else {}
+        options = dict(_TASK_CHAT_OPTIONS.get(task_type, {}))
+        if images:
+            options.update(_VISION_CHAT_OPTIONS)
         try:
             response = await adapter.chat(messages, **options)
         except Exception as exc:
@@ -560,6 +578,18 @@ class Orchestrator:
             body = body.strip('\n')
             if body.strip():
                 blocks.append((lang.lower(), body))
+
+        # A response cut off by the token budget ends inside its own fence, so the
+        # regex above -- which needs a closing ``` -- matches nothing at all and the
+        # code is silently discarded. Take the tail as a block so the failure surfaces
+        # as code that will not run, rather than as "no fenced code found".
+        consumed = content.rfind('```')
+        opening = _OPEN_FENCE.search(content, 0 if not blocks else consumed)
+        if opening and '```' not in content[opening.end():]:
+            body = content[opening.end():].strip('\n')
+            if body.strip():
+                blocks.append(((opening.group(1) or '').lower(), body))
+                j['_truncated_code'] = True
         return blocks
 
     def _coding_plan(self, j):

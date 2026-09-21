@@ -739,3 +739,44 @@ def test_conversation_history_comes_back_in_order(tmp_path):
 
     # And a turn must never render with its answer above its prompt.
     assert [m['role'] for m in store.messages(conversation, 50)] == ['user', 'assistant'] * 6
+
+
+def test_a_truncated_code_fence_is_still_recovered(tmp_path):
+    """A response cut off by the token budget ends inside its own fence.
+
+    The block regex needs a closing ```, so it matched nothing and the code was
+    silently discarded: the plan fell back to writing a .md file, `code_executed`
+    failed, and the job burned every iteration re-planning into the same wall.
+    Recovering the tail turns that into code that visibly fails to run.
+    """
+    from app.models.adapter import FakeModel
+    orchestrator, _ = _orchestrator(tmp_path, FakeModel())
+
+    complete = _job('x')
+    complete['model_response'] = {'content': 'Here you go.\n\n```python\nprint(1)\n```\n'}
+    assert orchestrator._code_blocks(complete) == [('python', 'print(1)')]
+    assert not complete.get('_truncated_code')
+
+    truncated = _job('y')
+    truncated['model_response'] = {'content': 'Here you go.\n\n```python\ndef f():\n    return 1 +'}
+    blocks = orchestrator._code_blocks(truncated)
+    assert blocks == [('python', 'def f():\n    return 1 +')]
+    assert truncated['_truncated_code'] is True
+
+    # A complete block followed by a truncated one keeps both.
+    both = _job('z')
+    both['model_response'] = {'content': '```python\nprint(1)\n```\ntext\n```python\nprint(2'}
+    assert orchestrator._code_blocks(both) == [('python', 'print(1)'), ('python', 'print(2')]
+
+    # Prose with no fence at all is still no code.
+    plain = _job('w')
+    plain['model_response'] = {'content': 'No code here at all.'}
+    assert orchestrator._code_blocks(plain) == []
+
+
+def test_a_coding_task_gets_a_budget_that_fits_a_source_file():
+    """1536 tokens truncated a "function plus unit test" answer mid-expression."""
+    from app.orchestrator.service import _TASK_CHAT_OPTIONS
+
+    assert _TASK_CHAT_OPTIONS['coding']['num_predict'] >= 4096
+    assert 'general' not in _TASK_CHAT_OPTIONS, 'a chat answer keeps the default budget'
