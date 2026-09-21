@@ -1089,3 +1089,41 @@ def test_boolean_columns_work_on_both_backends(tmp_path):
 
     # And an approval records without a boolean/integer mismatch.
     store.approval('job-1', True, 'reviewer-1')
+
+
+def test_timestamps_leave_the_store_as_iso_strings(tmp_path):
+    """psycopg returns TIMESTAMPTZ as a datetime; SQLite returns the ISO text stored.
+
+    The SSE endpoint serialises events with a plain json.dumps, which cannot encode a
+    datetime -- so on PostgreSQL the live event stream died on its first event and the
+    progress pane received nothing at all.
+    """
+    import json
+    import uuid
+    from datetime import datetime, timezone
+    from app.storage.store import Store
+
+    store = Store(f'sqlite:///{tmp_path / "s.db"}')
+
+    # The normaliser is what the backends have in common; check it directly.
+    stamp = datetime(2026, 9, 22, 10, 30, tzinfo=timezone.utc)
+    assert Store._iso(stamp) == stamp.isoformat()
+    assert Store._iso('2026-09-22T10:30:00+00:00') == '2026-09-22T10:30:00+00:00'
+    assert Store._iso(None) is None
+    assert Store._row({'a': stamp, 'b': 'x'}) == {'a': stamp.isoformat(), 'b': 'x'}
+    assert Store._row({'a': 1}, b=2) == {'a': 1, 'b': 2}
+
+    job = {'job_id': str(uuid.uuid4()), 'status': 'queued', 'task': 't'}
+    store.save(job)
+    store.event(job['job_id'], 'job_created', {'status': 'queued'})
+
+    events = store.events(job['job_id'])
+    assert events and isinstance(events[0]['timestamp'], str)
+    # The SSE endpoint does exactly this, and it must not raise.
+    json.dumps(events[0])
+
+    conversation = str(uuid.uuid4())
+    store.create_conversation(conversation, 't', 'u', 'Timestamps')
+    store.add_message(str(uuid.uuid4()), conversation, 'user', 'hello', [])
+    json.dumps(store.messages(conversation))
+    json.dumps(store.conversations({'tenant_id': 't', 'user_id': 'u', 'role': 'admin'}))

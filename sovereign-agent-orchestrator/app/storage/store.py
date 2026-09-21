@@ -16,6 +16,23 @@ class Store:
     def _decode(value):
         return value if isinstance(value, (dict, list)) else json.loads(value or '{}')
 
+    @staticmethod
+    def _iso(value):
+        """Timestamps out of the store are always ISO-8601 strings.
+
+        SQLite stores them as the ISO text we wrote; PostgreSQL stores TIMESTAMPTZ and
+        psycopg returns a datetime object. That difference reached the API unchanged and
+        broke the SSE stream outright -- json.dumps cannot serialise a datetime, so the
+        live event stream died on the first event and the progress pane never received
+        anything. Normalising here keeps every reader, and both backends, on one shape.
+        """
+        return value.isoformat() if isinstance(value, datetime) else value
+
+    @classmethod
+    def _row(cls, mapping, **overrides):
+        """A result row as plain JSON-safe values, identical on either backend."""
+        return {**{key: cls._iso(value) for key, value in dict(mapping).items()}, **overrides}
+
     def _create_schema(self):
         if self.url.startswith('postgresql'):
             # Production Postgres is provisioned by migrations/core/001_operational.sql.
@@ -81,7 +98,7 @@ class Store:
     def events(self, jid):
         with self.engine.connect() as db:
             rows = db.execute(text('SELECT id,type,data,created_at FROM events WHERE job_id=:job ORDER BY id'), {'job': jid}).fetchall()
-        return [{'event_id': str(row[0]), 'type': row[1], 'data': self._decode(row[2]), 'timestamp': row[3]} for row in rows]
+        return [{'event_id': str(row[0]), 'type': row[1], 'data': self._decode(row[2]), 'timestamp': self._iso(row[3])} for row in rows]
 
     def approval(self, jid, approved, reviewer):
         with self.lock, self.engine.begin() as db:
@@ -94,7 +111,7 @@ class Store:
     def files(self, identity, limit=100):
         with self.engine.connect() as db:
             rows = db.execute(text('SELECT id,owner_id,tenant_id,name,path,metadata FROM files WHERE tenant_id=:tenant ORDER BY name LIMIT :limit'), {'tenant': identity['tenant_id'], 'limit': min(max(limit, 1), 100)}).fetchall()
-        return [dict(row._mapping, metadata=self._decode(row.metadata)) for row in rows if row.owner_id == identity['user_id'] or identity.get('role') == 'admin']
+        return [self._row(row._mapping, metadata=self._decode(row.metadata)) for row in rows if row.owner_id == identity['user_id'] or identity.get('role') == 'admin']
 
     def user_storage_bytes(self, identity):
         with self.engine.connect() as db:
@@ -106,7 +123,7 @@ class Store:
             row = db.execute(text('SELECT id,owner_id,tenant_id,name,path,metadata FROM files WHERE id=:id AND tenant_id=:tenant'), {'id': file_id, 'tenant': identity['tenant_id']}).first()
         if not row or (row.owner_id != identity['user_id'] and identity.get('role') != 'admin' and file_id not in self.accessible_file_ids(identity)):
             return None
-        return dict(row._mapping, metadata=self._decode(row.metadata))
+        return self._row(row._mapping, metadata=self._decode(row.metadata))
 
     def accessible_file_ids(self, identity):
         now = datetime.now(timezone.utc).isoformat()
@@ -135,7 +152,7 @@ class Store:
             return None
         with self.engine.connect() as db:
             rows = db.execute(text('SELECT id,file_id,shared_with_user_id,permission,expires_at,revoked,created_at FROM file_shares WHERE file_id=:file ORDER BY created_at DESC'), {'file': file_id}).fetchall()
-        return [dict(row._mapping) for row in rows]
+        return [self._row(row._mapping) for row in rows]
 
     def delete_file(self, file_id, identity):
         record = self.file_for(file_id, identity)
@@ -195,12 +212,12 @@ class Store:
             row = db.execute(text('SELECT id,tenant_id,owner_id,title,created_at,updated_at,archived FROM conversations WHERE id=:id AND tenant_id=:tenant'), {'id': conversation_id, 'tenant': identity['tenant_id']}).first()
         if not row or (row.owner_id != identity['user_id'] and identity.get('role') != 'admin'):
             return None
-        return dict(row._mapping)
+        return self._row(row._mapping)
 
     def conversations(self, identity, limit=50):
         with self.engine.connect() as db:
             rows = db.execute(text('SELECT id,tenant_id,owner_id,title,created_at,updated_at,archived FROM conversations WHERE tenant_id=:tenant AND (owner_id=:owner OR :admin=1) AND archived=false ORDER BY updated_at DESC LIMIT :limit'), {'tenant': identity['tenant_id'], 'owner': identity['user_id'], 'admin': int(identity.get('role') == 'admin'), 'limit': min(max(limit, 1), 100)}).fetchall()
-        return [dict(row._mapping) for row in rows]
+        return [self._row(row._mapping) for row in rows]
 
     def add_message(self, message_id, conversation_id, role, content, citations=None):
         now = datetime.now(timezone.utc).isoformat()
@@ -220,4 +237,4 @@ class Store:
         # is at least stable between calls.
         with self.engine.connect() as db:
             rows = db.execute(text('SELECT id,conversation_id,role,content,citations,created_at FROM messages WHERE conversation_id=:conversation ORDER BY created_at DESC, id DESC LIMIT :limit'), {'conversation': conversation_id, 'limit': min(max(limit, 1), 100)}).fetchall()
-        return [dict(row._mapping, citations=self._decode(row.citations)) for row in reversed(rows)]
+        return [self._row(row._mapping, citations=self._decode(row.citations)) for row in reversed(rows)]
