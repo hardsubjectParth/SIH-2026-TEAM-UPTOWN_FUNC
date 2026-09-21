@@ -780,3 +780,98 @@ def test_a_coding_task_gets_a_budget_that_fits_a_source_file():
 
     assert _TASK_CHAT_OPTIONS['coding']['num_predict'] >= 4096
     assert 'general' not in _TASK_CHAT_OPTIONS, 'a chat answer keeps the default budget'
+
+
+def _scanned_pdf(pages=1):
+    """A PDF whose pages are pictures -- no text layer, as a scanner produces."""
+    import pymupdf
+
+    rendered = pymupdf.open()
+    source = pymupdf.open()
+    sheet = source.new_page(width=595, height=842)
+    sheet.insert_text((60, 120), 'DRAWING 4471  SCALE 1:2', fontsize=22)
+    pixmap = sheet.get_pixmap(dpi=120)
+    source.close()
+    for _ in range(pages):
+        page = rendered.new_page(width=595, height=842)
+        page.insert_image(pymupdf.Rect(0, 0, 595, 842), pixmap=pixmap)
+    data = rendered.tobytes()
+    rendered.close()
+    return data
+
+
+def test_a_scanned_pdf_reaches_the_vision_model(tmp_path):
+    """A drawing delivered as a PDF is how P&IDs and SOPs actually arrive.
+
+    is_image_attachment matches only image MIME types, so such a file was answered
+    from whatever ingest-time OCR managed and its pages never reached a model that
+    could see them.
+    """
+    import asyncio
+    from app.models.adapter import FakeModel
+
+    class Recorder(FakeModel):
+        messages = None
+
+        async def chat(self, msgs, tools=None, **kwargs):
+            Recorder.messages = msgs
+            return {'content': 'Read it.'}
+
+    orchestrator, store = _orchestrator(tmp_path, Recorder())
+    job = _job('what does this drawing show')
+    root = orchestrator.workspace.create(job['job_id'])
+    (root / 'input' / 'scan.pdf').write_bytes(_scanned_pdf())
+    job['attachments'] = [{'file_id': 'f1', 'name': 'scan.pdf',
+                           'path': 'input/scan.pdf', 'mime_type': 'application/pdf'}]
+
+    asyncio.run(orchestrator.run(job))
+
+    done = store.get(job['job_id'])
+    assert done['routing']['requires_vision'], 'a scanned PDF must route to a vision model'
+    user = [m for m in Recorder.messages if m['role'] == 'user'][-1]
+    assert user.get('images') and len(user['images']) == 1
+    assert base64.b64decode(user['images'][0])[:4] == b'\x89PNG'
+
+    attached = [e for e in store.events(job['job_id']) if e['type'] == 'images_attached']
+    assert attached and attached[0]['data']['names'] == ['scan.pdf p.1']
+
+
+def test_a_text_pdf_is_not_rasterised(tmp_path):
+    """A PDF with a real text layer is already readable and must not cost ~2.8k
+    tokens a page to look at."""
+    import pymupdf
+    from app.orchestrator.service import _pdf_page_images
+
+    document = pymupdf.open()
+    page = document.new_page()
+    page.insert_textbox(pymupdf.Rect(60, 60, 540, 700), 'Inspection report. ' * 60, fontsize=11)
+    data = document.tobytes()
+    document.close()
+
+    assert _pdf_page_images(data, 6) == ([], 0)
+
+
+def test_attached_images_are_capped_to_fit_the_context_window(tmp_path):
+    """Measured at ~2,818 tokens per enlarged page, eleven images fill a 32K window.
+
+    Without a cap a long scan produced a prompt the model could not hold, silently.
+    """
+    import asyncio
+    from app.models.adapter import FakeModel
+    from app.orchestrator.service import _MAX_ATTACHED_IMAGES
+
+    orchestrator, store = _orchestrator(tmp_path, FakeModel())
+    job = _job('read this')
+    root = orchestrator.workspace.create(job['job_id'])
+    (root / 'input' / 'long.pdf').write_bytes(_scanned_pdf(pages=_MAX_ATTACHED_IMAGES + 3))
+    job['attachments'] = [{'file_id': 'f1', 'name': 'long.pdf',
+                           'path': 'input/long.pdf', 'mime_type': 'application/pdf'}]
+
+    images, omitted = orchestrator._attached_images(job)
+    assert len(images) == _MAX_ATTACHED_IMAGES
+    assert omitted == 3
+
+    # The model is told what it is not seeing, rather than answering as though the
+    # missing pages did not exist.
+    prompt = orchestrator._system_prompt('general', images, omitted)
+    assert 'could not be included' in prompt

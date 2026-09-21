@@ -68,7 +68,7 @@ class ModelRouter:
     def _enabled(self):
         return [m for m in self.models if m.get('enabled') and 'embedding' not in m.get('capabilities', [])]
 
-    def route(self, task, attachments=None):
+    def route(self, task, attachments=None, force_vision=False):
         task_type = self.classify(task)
         capability = _CAPABILITY[task_type]
 
@@ -82,7 +82,10 @@ class ModelRouter:
         # keeps the task type, plan and deliverable intact: a "save this as
         # pptx" with a drawing attached still produces a deck, but the model
         # building it can see the drawing.
-        requires_vision = has_image_attachments(attachments)
+        # force_vision is how the orchestrator reports a scanned PDF: whether a PDF is
+        # a picture of a page or a text document cannot be told from its name or MIME
+        # type, only by opening it, so that call is made before routing.
+        requires_vision = force_vision or has_image_attachments(attachments)
         if requires_vision:
             capability = 'vision'
 

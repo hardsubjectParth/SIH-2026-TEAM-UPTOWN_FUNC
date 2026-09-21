@@ -93,6 +93,22 @@ _MAX_UPSCALE = 4.0
 # is 0.2 MP.
 _UPSCALE_BELOW_PIXELS = 1_200_000
 
+# A scanned PDF is a picture of a page, and until now it never reached the vision
+# model: is_image_attachment matched only image MIME types, so a drawing delivered as
+# a PDF -- which is how P&IDs, SOPs and maintenance records actually arrive -- was
+# answered from whatever ingest-time OCR had managed. Pages whose text layer is thin
+# are rasterised and attached alongside the images.
+_PDF_RASTER_DPI = 170
+# Below this many non-whitespace characters a page is effectively a picture. A real
+# text layer needs no vision pass and should not cost ~2.8k tokens a page.
+_PDF_TEXT_PER_PAGE = 200
+
+# Measured at 2,818 tokens for one enlarged drawing, so eleven images fill a 32K
+# window with nothing left for the answer. The cap leaves room for the system prompt,
+# retrieved evidence, history and an 8k vision reply; anything past it is reported
+# rather than silently dropped into a truncated prompt.
+_MAX_ATTACHED_IMAGES = 6
+
 # Generation settings for a call that carries an image, all three measured on
 # qwen3-vl:8b against a dense engineering drawing.
 #
@@ -123,6 +139,31 @@ _TASK_CHAT_OPTIONS = {
     'spreadsheet': {'num_predict': 3072},
     'calculation': {'num_predict': 3072},
 }
+
+
+def _pdf_page_images(data, limit):
+    """Rendered pages of a PDF that carry no usable text layer.
+
+    Returns ``(pages, needing_vision)``. Only `limit` pages are rasterised -- that is
+    the expensive part -- but every page that would have needed one is counted, so the
+    caller can report honestly how much of the document the model did not see.
+    """
+    import pymupdf
+
+    pages = []
+    needing_vision = 0
+    document = pymupdf.open(stream=data, filetype='pdf')
+    try:
+        for index in range(document.page_count):
+            page = document.load_page(index)
+            if len(re.sub(r'\s+', '', page.get_text() or '')) >= _PDF_TEXT_PER_PAGE:
+                continue
+            needing_vision += 1
+            if len(pages) < limit:
+                pages.append((index + 1, page.get_pixmap(dpi=_PDF_RASTER_DPI).tobytes('png')))
+    finally:
+        document.close()
+    return pages, needing_vision
 
 
 def _fit_for_vision(data):
@@ -237,21 +278,42 @@ class Orchestrator:
         picture.
         """
         out = []
+        omitted = 0
         for item in j.get('attachments') or []:
-            if not is_image_attachment(item):
+            name = item.get('name') or Path(str(item.get('path', ''))).name
+            is_pdf = str(item.get('mime_type') or '').lower().endswith('/pdf') or name.lower().endswith('.pdf')
+            if not is_image_attachment(item) and not is_pdf:
                 continue
             try:
                 data = self.workspace.safe(j['job_id'], item['path']).read_bytes()
             except (OSError, ValueError, KeyError) as exc:
-                self._emit(j, 'attachment_unreadable', {'name': item.get('name'), 'error': str(exc)})
+                self._emit(j, 'attachment_unreadable', {'name': name, 'error': str(exc)})
                 continue
-            fitted, note = _fit_for_vision(data)
-            out.append({'name': item.get('name') or Path(str(item.get('path', ''))).name,
-                        'note': note,
-                        'data': base64.b64encode(fitted).decode('ascii')})
-        return out
 
-    async def _call_model(self, j, feedback=None):
+            if is_pdf:
+                # Only the pages that are pictures. A PDF with a real text layer is
+                # already readable as text and costs nothing to skip.
+                try:
+                    rendered, needing_vision = _pdf_page_images(data, _MAX_ATTACHED_IMAGES - len(out))
+                except Exception as exc:
+                    self._emit(j, 'attachment_unreadable', {'name': name, 'error': f'PDF render failed: {exc}'})
+                    continue
+                if not needing_vision:
+                    continue
+                omitted += needing_vision - len(rendered)
+                candidates = [(f'{name} p.{number}', png) for number, png in rendered]
+            else:
+                candidates = [(name, data)]
+
+            for label, payload in candidates:
+                if len(out) >= _MAX_ATTACHED_IMAGES:
+                    omitted += 1
+                    continue
+                fitted, note = _fit_for_vision(payload)
+                out.append({'name': label, 'note': note, 'data': base64.b64encode(fitted).decode('ascii')})
+        return out, omitted
+
+    async def _call_model(self, j, feedback=None, images=(), omitted=0):
         context = ''
         if getattr(self.tools, 'rag', None):
             user_context = j.get('user_context', {})
@@ -271,8 +333,7 @@ class Orchestrator:
             )
 
         task_type = j.get('routing', {}).get('task_type', 'general')
-        images = self._attached_images(j)
-        messages = [{'role': 'system', 'content': self._system_prompt(task_type, images)}]
+        messages = [{'role': 'system', 'content': self._system_prompt(task_type, images, omitted)}]
         if j.get('conversation_id'):
             history = self.store.messages(j['conversation_id'], 20)
             if history and history[-1]['role'] == 'user' and history[-1]['content'] == j['task']:
@@ -291,6 +352,7 @@ class Orchestrator:
             self._emit(j, 'images_attached', {
                 'names': [image['name'] for image in images],
                 'resized': [f"{image['name']}: {image['note']}" for image in images if image.get('note')],
+                'omitted': omitted,
             })
         messages.append(message)
 
@@ -322,7 +384,7 @@ class Orchestrator:
         return response
 
     @staticmethod
-    def _system_prompt(task_type, images=None):
+    def _system_prompt(task_type, images=None, omitted=0):
         base = (
             'You are the local planning model for the Sovereign Agent Orchestrator. '
             'Use conversation history and retrieved evidence when provided. For factual '
@@ -360,6 +422,12 @@ class Orchestrator:
                 'without first describing what you can see. State plainly if a value genuinely '
                 'is not legible or not shown, rather than guessing it.'
             )
+            if omitted:
+                base += (
+                    f' {omitted} further page(s) or image(s) were attached but could not be included '
+                    'in this message. Answer only from what you were given and say that the remainder '
+                    'was not available to you.'
+                )
         return base
 
     # ------------------------------------------------------------------ plan
@@ -668,7 +736,12 @@ class Orchestrator:
         self.workspace.create(j['job_id'])
         self._status(j, JobStatus.planning)
 
-        j['routing'] = self.router.route(j['task'], j.get('attachments'))
+        # Resolved before routing: whether a PDF is a scan or a text document is only
+        # knowable by opening it, and the answer decides which model must serve the job.
+        # Done once here rather than per iteration, and deliberately not stored on the
+        # job -- base64 pages would be persisted to the database on every save.
+        images, omitted = self._attached_images(j)
+        j['routing'] = self.router.route(j['task'], j.get('attachments'), force_vision=bool(images))
         j['task_type'] = j['routing']['task_type']
         self._emit(j, 'model_selected', j['routing'])
 
@@ -680,7 +753,7 @@ class Orchestrator:
             j['observations'] = []
 
             try:
-                await self._call_model(j, feedback=feedback)
+                await self._call_model(j, feedback=feedback, images=images, omitted=omitted)
             except Exception as exc:
                 j['error'] = f'Model invocation failed: {exc}'
                 self._emit(j, 'model_error', {'error': str(exc), 'model_id': j['routing']['model_id']})
