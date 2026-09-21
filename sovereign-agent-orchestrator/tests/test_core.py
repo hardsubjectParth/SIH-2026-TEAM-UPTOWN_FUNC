@@ -1055,3 +1055,37 @@ def test_json_columns_decode_from_either_backend():
     assert _decode_json(None, {}) == {}
     assert _decode_json('', {}) == {}
     assert _decode_json('   ', []) == []
+
+
+def test_boolean_columns_work_on_both_backends(tmp_path):
+    """SQLite stores booleans as integers, so `archived = 0` worked there.
+
+    PostgreSQL has no boolean = integer operator and rejects the comparison, which
+    took out the conversation list (GET /conversations returned 500, so no session
+    ever appeared in the sidebar), file-share access, share revocation, and recording
+    an approval. TRUE/FALSE are keywords in both backends.
+    """
+    import uuid
+    from app.storage.store import Store
+
+    store = Store(f'sqlite:///{tmp_path / "s.db"}')
+    identity = {'tenant_id': 't', 'user_id': 'u', 'role': 'admin'}
+
+    first = str(uuid.uuid4())
+    store.create_conversation(first, 't', 'u', 'Older session')
+    second = str(uuid.uuid4())
+    store.create_conversation(second, 't', 'u', 'Newer session')
+
+    listed = store.conversations(identity)
+    assert [c['title'] for c in listed] == ['Newer session', 'Older session'], 'newest first'
+
+    # A share is visible until revoked, then it is not.
+    store.register_file('f1', 'u', 't', 'doc.txt', str(tmp_path / 'doc.txt'), {})
+    share = store.share_file('f1', identity, 'bob')
+    bob = {'tenant_id': 't', 'user_id': 'bob', 'role': 'lower'}
+    assert 'f1' in store.accessible_file_ids(bob)
+    store.revoke_share(share['id'] if isinstance(share, dict) else share, identity)
+    assert 'f1' not in store.accessible_file_ids(bob)
+
+    # And an approval records without a boolean/integer mismatch.
+    store.approval('job-1', True, 'reviewer-1')

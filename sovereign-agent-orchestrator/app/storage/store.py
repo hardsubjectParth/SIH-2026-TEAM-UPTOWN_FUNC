@@ -85,7 +85,7 @@ class Store:
 
     def approval(self, jid, approved, reviewer):
         with self.lock, self.engine.begin() as db:
-            db.execute(text('INSERT INTO approvals(job_id,approved,reviewer,created_at) VALUES(:job,:approved,:reviewer,:created)'), {'job': jid, 'approved': int(approved), 'reviewer': reviewer, 'created': datetime.now(timezone.utc).isoformat()})
+            db.execute(text('INSERT INTO approvals(job_id,approved,reviewer,created_at) VALUES(:job,:approved,:reviewer,:created)'), {'job': jid, 'approved': bool(approved), 'reviewer': reviewer, 'created': datetime.now(timezone.utc).isoformat()})
 
     def register_file(self, file_id, owner_id, tenant_id, name, path, metadata):
         with self.engine.begin() as db:
@@ -111,7 +111,7 @@ class Store:
     def accessible_file_ids(self, identity):
         now = datetime.now(timezone.utc).isoformat()
         with self.engine.connect() as db:
-            rows = db.execute(text('SELECT f.id FROM files f LEFT JOIN file_shares s ON s.file_id=f.id AND s.shared_with_user_id=:user AND s.revoked=0 AND (s.expires_at IS NULL OR s.expires_at>:now) WHERE f.tenant_id=:tenant AND (f.owner_id=:user OR :admin=1 OR s.id IS NOT NULL)'), {'tenant': identity['tenant_id'], 'user': identity['user_id'], 'admin': int(identity.get('role') == 'admin'), 'now': now}).fetchall()
+            rows = db.execute(text('SELECT f.id FROM files f LEFT JOIN file_shares s ON s.file_id=f.id AND s.shared_with_user_id=:user AND s.revoked=false AND (s.expires_at IS NULL OR s.expires_at>:now) WHERE f.tenant_id=:tenant AND (f.owner_id=:user OR :admin=1 OR s.id IS NOT NULL)'), {'tenant': identity['tenant_id'], 'user': identity['user_id'], 'admin': int(identity.get('role') == 'admin'), 'now': now}).fetchall()
         return [row[0] for row in rows]
 
     def share_file(self, file_id, identity, user_id, permission='read', expires_at=None):
@@ -127,7 +127,7 @@ class Store:
 
     def revoke_share(self, share_id, identity):
         with self.engine.begin() as db:
-            result = db.execute(text('UPDATE file_shares SET revoked=1 WHERE id=:id AND tenant_id=:tenant AND EXISTS (SELECT 1 FROM files f WHERE f.id=file_shares.file_id AND (f.owner_id=:user OR :admin=1))'), {'id': share_id, 'tenant': identity['tenant_id'], 'user': identity['user_id'], 'admin': int(identity.get('role') == 'admin')})
+            result = db.execute(text('UPDATE file_shares SET revoked=true WHERE id=:id AND tenant_id=:tenant AND EXISTS (SELECT 1 FROM files f WHERE f.id=file_shares.file_id AND (f.owner_id=:user OR :admin=1))'), {'id': share_id, 'tenant': identity['tenant_id'], 'user': identity['user_id'], 'admin': int(identity.get('role') == 'admin')})
         return result.rowcount > 0
 
     def file_shares(self, file_id, identity):
@@ -199,7 +199,7 @@ class Store:
 
     def conversations(self, identity, limit=50):
         with self.engine.connect() as db:
-            rows = db.execute(text('SELECT id,tenant_id,owner_id,title,created_at,updated_at,archived FROM conversations WHERE tenant_id=:tenant AND (owner_id=:owner OR :admin=1) AND archived=0 ORDER BY updated_at DESC LIMIT :limit'), {'tenant': identity['tenant_id'], 'owner': identity['user_id'], 'admin': int(identity.get('role') == 'admin'), 'limit': min(max(limit, 1), 100)}).fetchall()
+            rows = db.execute(text('SELECT id,tenant_id,owner_id,title,created_at,updated_at,archived FROM conversations WHERE tenant_id=:tenant AND (owner_id=:owner OR :admin=1) AND archived=false ORDER BY updated_at DESC LIMIT :limit'), {'tenant': identity['tenant_id'], 'owner': identity['user_id'], 'admin': int(identity.get('role') == 'admin'), 'limit': min(max(limit, 1), 100)}).fetchall()
         return [dict(row._mapping) for row in rows]
 
     def add_message(self, message_id, conversation_id, role, content, citations=None):
