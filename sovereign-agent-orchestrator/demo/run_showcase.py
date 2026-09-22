@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -111,6 +112,12 @@ def main():
     parser.add_argument('--corpus', default='demo/corpus')
     parser.add_argument('--skip-upload', action='store_true', help='reuse the ids in corpus/uploaded.json')
     args = parser.parse_args()
+
+    # Each vision upload blocks for a minute or more, and Python block-buffers
+    # stdout whenever it is not a terminal. Piped to a file or a log, that meant
+    # nothing appeared at all until the whole run finished -- the operator could
+    # not tell a working vision pass from a hung one.
+    sys.stdout.reconfigure(line_buffering=True)
 
     base = args.base_url.rstrip('/')
     corpus = Path(args.corpus)

@@ -58,6 +58,78 @@ Eight in the `lower` tier, two in `higher`, two in `admin`.
 | `vendor_addendum_a3.docx` | admin | text | The penalty clause, plus dense PII for `redact_pii` |
 | `incident_memo_u3_trip.pdf` | admin | text layer | Ties the operational story to the commercial exposure |
 
+## Measured baseline
+
+A full run on 2026-09-23 against the live API (qwen3.6:27b, bge-m3 at 1024
+dimensions, qwen3-vl:8b vision, four Postgres databases). Reproduce it with
+`run_showcase.py`; these are the numbers to compare against.
+
+**Ingest routing behaved exactly as designed.** Content decides cost, not file
+size:
+
+| Document | Ingest | Path |
+|---|---|---|
+| `shift_log_2026_09.csv`, `supplier_bulletin_2026_09.pdf`, the DOCX/XLSX | 0.1–0.2s | text / tabular |
+| `sop_pump_changeover.pdf` | 2.2s | text layer |
+| `valve_tag_hv1127.png` | 12.8s | vision |
+| `nameplate_p204b.png` | 17.9s | vision |
+| `degraded_field_note.jpg` | 34.4s | vision |
+| `mixed_manual_extract.pdf` | 51.1s | vision, **1 of 3 pages** |
+| `scanned_inspection_report.pdf` | 151.0s | vision, 2 of 2 pages |
+
+The mixed manual is the selectivity result: three pages, but only the scanned one
+went to the model, at roughly a third the cost of the two-page scan.
+
+**Extraction was exact.** What the vision model actually wrote into the tier:
+
+```
+nameplate_p204b.png    KAVERI PUMPS LTD BFP P-204B SN 744DC0 3300V 6.6A
+valve_tag_hv1127.png   HV-1127 CL300 WCB
+mixed_manual_extract   ...[Page 3] TABLE 7-3 ... M20 8.8 Dry 410 N.m
+```
+
+The valve tag is the fix working in production: 17 characters, kept rather than
+replaced with *"no machine-readable text"*.
+
+**Tier isolation: 3 of 3 as designed.** Lower could not reach the root cause;
+lower and higher could not reach the penalty clause.
+
+**Retrieval: hit rate 0.826, MRR 0.696 over 23 cases** — and the four misses are
+worth more than the successes, because they are a real weakness this corpus was
+built to expose.
+
+### The sparse-document retrieval gap
+
+All four misses are documents whose *content is correct and indexed*. They are
+ranked out of the top 5, not missing:
+
+| Missed query | Target | Actual rank |
+|---|---|---|
+| serial number on the P-204B nameplate | `nameplate_p204b.png` | 9 |
+| voltage rating of P-204B | `nameplate_p204b.png` | 6 |
+| tag number on the isolation valve | `valve_tag_hv1127.png` | not in top 10 |
+| shift when NDE temperature peaked | `shift_log_2026_09.csv` | 8 |
+
+Dense retrieval buries short chunks. A nameplate is 48 characters and a valve tag
+is 17; the documents beating them are 1200-character passages that share the
+query's vocabulary — "P-204B", "pump", "bearing" — while `HV-1127 CL300 WCB` has
+almost no vocabulary to match at all.
+
+The uncomfortable part is the irony: **the documents the OCR fix was made to
+preserve are the ones retrieval then hides.** The fix made nameplates and valve
+tags *indexed*; it did not make them *findable*. Three mitigations, cheapest
+first:
+
+1. **Raise `top_k` to 10** — recovers three of the four misses immediately.
+2. **Attach the image to the job** instead of relying on retrieval. This is the
+   intended path for "what does this plate say": an attached image is passed to
+   the model directly and overrides routing to a vision-capable model, so it does
+   not compete with text chunks at all.
+3. **Enable reranking.** `/system/capabilities` currently reports
+   `reranking: false`; a cross-encoder scores the query against the chunk text
+   rather than comparing embeddings, which is exactly the asymmetry that hurts
+   here.
+
 ## Suggested run-sheet
 
 Five demonstrations, in the order that builds on itself. Each has a fixed correct
@@ -76,6 +148,11 @@ appears nowhere in extractable text in the entire corpus, and the nameplate is a
 characters and gives up, so ingest escalates to the vision model.
 `verify_corpus.py` asserts both facts against the real extractor. A correct
 answer cannot have come from retrieval or from Tesseract.
+
+> **Attach the image to the job for this one.** Asked as a plain retrieval
+> question at the default `top_k` of 5, the nameplate ranks 9th and you will get
+> a confident answer sourced from the wrong documents — see the sparse-document
+> gap above. Attaching the photo is both the intended path and the honest demo.
 
 > *"What is the serial number on the P-204B nameplate?"* → 744DC0
 
