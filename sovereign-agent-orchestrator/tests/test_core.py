@@ -1127,3 +1127,41 @@ def test_timestamps_leave_the_store_as_iso_strings(tmp_path):
     store.add_message(str(uuid.uuid4()), conversation, 'user', 'hello', [])
     json.dumps(store.messages(conversation))
     json.dumps(store.conversations({'tenant_id': 't', 'user_id': 'u', 'role': 'admin'}))
+
+
+def test_a_short_but_correct_vision_reading_is_kept(tmp_path):
+    """A nameplate, a valve tag or a stamped part number is a few characters.
+
+    _ocr_is_unusable exists to catch Tesseract noise and both of its tests reject
+    such a reading -- "SCAN INGEST744DC0" is 16 characters against a 24-character
+    floor, and one alphabetic token of two against a word-ratio floor. Applying it
+    to vision output indexed "no machine-readable text" for images the model had
+    read perfectly well.
+    """
+    import asyncio
+    from PIL import Image
+    from app.rag.service import RagService
+
+    assert RagService._ocr_is_unusable('SCAN INGEST744DC0'), 'the noise heuristic does reject it'
+    assert not RagService._vision_failed('SCAN INGEST744DC0'), 'but it is a real reading'
+    assert not RagService._vision_failed('P-101')
+    assert RagService._vision_failed('')
+    assert RagService._vision_failed('   ')
+    assert RagService._vision_failed('[OCR unavailable: no tesseract]')
+
+    source = tmp_path / 'nameplate.png'
+    Image.new('RGB', (400, 120), 'white').save(source)
+
+    rag = RagService(f'sqlite:///{tmp_path / "r.db"}')
+    rag._ocr = lambda path: '[OCR unavailable: tesseract missing]'
+
+    async def _vision(path):
+        return 'PUMP P-101'
+
+    rag._vision_extract = _vision
+    asyncio.run(rag.ingest(source))
+
+    hits = asyncio.run(rag.search('P-101'))
+    assert hits, 'the nameplate should be findable'
+    assert 'PUMP P-101' in hits[0]['content']
+    assert 'no machine-readable text' not in hits[0]['content']

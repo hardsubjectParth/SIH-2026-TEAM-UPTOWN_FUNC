@@ -214,6 +214,21 @@ class RagService:
         return len(words) < max(3, len(tokens) * 0.4)
 
     @staticmethod
+    def _vision_failed(text):
+        """Whether a vision transcription actually failed, as opposed to being short.
+
+        _ocr_is_unusable exists to catch Tesseract noise, and both of its tests reject
+        valid vision output: a nameplate reading "SCAN INGEST744DC0" is 16 characters,
+        under the 24-character floor, and two tokens of which one contains digits, under
+        the word-ratio floor. Applying it to the vision model threw away correct
+        readings of exactly the images an industrial system exists to read -- equipment
+        nameplates, valve tags, stamped part numbers -- and indexed "no machine-readable
+        text" in their place. The vision model returns what it sees, so short output
+        means a sparse image, not a failure.
+        """
+        return not text or not text.strip() or text.startswith('[OCR unavailable:')
+
+    @staticmethod
     def _ocr(path):
         try:
             import pytesseract
@@ -342,7 +357,7 @@ class RagService:
             if is_image and self._ocr_is_unusable(extracted_text):
                 vision_text = await self._vision_extract(path)
                 extracted_text = (
-                    vision_text if not self._ocr_is_unusable(vision_text)
+                    vision_text if not self._vision_failed(vision_text)
                     else _no_text_marker(_display_name(path, metadata))
                 )
             elif suffix == '.pdf':
@@ -353,7 +368,7 @@ class RagService:
                 scanned, page_count = self._pdf_pages_without_text(path)
                 if scanned:
                     vision_text = await self._vision_extract_pdf(path, only_pages=scanned)
-                    if not self._ocr_is_unusable(vision_text):
+                    if not self._vision_failed(vision_text):
                         # extract() only falls back to Tesseract when the WHOLE document is
                         # thin, so a mixed PDF still returns its real text layer and that is
                         # worth keeping beside the transcription. When every page is a
@@ -419,7 +434,7 @@ class RagService:
         # contains nothing.
         raw = content or (message.get('thinking') or '')
         cleaned = _strip_reasoning(raw)
-        return cleaned if not self._ocr_is_unusable(cleaned) else _THINK_TAGS.sub('', raw).strip()
+        return cleaned if not self._vision_failed(cleaned) else _THINK_TAGS.sub('', raw).strip()
 
     async def _vision_extract(self, path):
         try:
