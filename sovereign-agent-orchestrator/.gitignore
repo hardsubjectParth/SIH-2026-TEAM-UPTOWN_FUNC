@@ -23,3 +23,8 @@ Thumbs.db
 
 # Filled-in single-container secrets
 podman-single.env
+
+# Generated demo corpus. Rebuilt in ~2s by demo/generate_corpus.py, and PDF /
+# DOCX / XLSX embed a creation timestamp, so committing it would churn binary
+# diffs on every regeneration.
+demo/corpus/
