@@ -125,10 +125,41 @@ first:
    intended path for "what does this plate say": an attached image is passed to
    the model directly and overrides routing to a vision-capable model, so it does
    not compete with text chunks at all.
-3. **Enable reranking.** `/system/capabilities` currently reports
-   `reranking: false`; a cross-encoder scores the query against the chunk text
-   rather than comparing embeddings, which is exactly the asymmetry that hurts
-   here.
+3. **A cross-encoder reranker.** Not the local one — see below; it is already
+   running and cannot help. A cross-encoder scores the query against the chunk
+   *text* rather than comparing two embeddings, which is exactly the asymmetry
+   that hurts here. `bge-reranker` exists on the `godliketenth` branch.
+
+### Reranking is already on, and cannot fix this
+
+`/system/capabilities` reported `reranking: false`, which is false:
+`RagService._rerank` runs unconditionally on both search paths, blending
+`0.75 x cosine + 0.25 x lexical`. The literal in `app/diagnostics.py` was simply
+wrong, and wrong in the direction that sends you looking for a switch that does
+not exist. It now reports `local_lexical_blend`. **Every number on this page was
+already measured with reranking active.**
+
+Two principled attempts to strengthen it were tried and measured, and both were
+reverted after changing nothing at all — hit rate, MRR and every individual rank
+were identical in all three configurations:
+
+| Attempt | Result |
+|---|---|
+| Score the document *name* alongside its content, so `valve_tag_hv1127.png` contributes the words `valve` and `tag` that the transcription `HV-1127 CL300 WCB` lacks | 0.826 / 0.696, ranks unchanged |
+| Widen the rerank candidate pool from `top_k * 4` (20 rows) to 50 | 0.826 / 0.696, ranks unchanged |
+
+The reason is visible in the scores. The valve tag finishes at **0.3275 against a
+top-5 cut of 0.4173** — a gap of 0.090 — and the nameplate at **0.4489 against
+0.4844**, a gap of 0.036. A lexical term carrying a quarter of the weight cannot
+move a document that far, and widening the pool does not help because the pool is
+ordered by the very cosine distance doing the burying: the tag is at cosine rank
+19, so it was already inside the old 20-row pool.
+
+The lesson is about instrument choice, not tuning. A lexical blend re-scores what
+the dense retriever already ranked; it cannot rescue a document whose deficit is
+*in* the dense score. Do not spend further effort tuning the blend weight against
+these 23 cases — that is overfitting a corpus this small. Raise `top_k`, attach
+the image, or bring in a cross-encoder.
 
 ## Suggested run-sheet
 

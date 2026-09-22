@@ -103,7 +103,10 @@ def build_capabilities(settings, database, workspace):
         'retrieval': {
             'semantic': bool(settings.ollama_embedding_model),
             'fallback': 'lexical',
-            'reranking': False,
+            # _rerank runs unconditionally on both search paths, so reporting
+            # False here was simply wrong -- and wrong in the direction that
+            # invites someone to go looking for a switch that does not exist.
+            'reranking': 'local_lexical_blend',
             'quality_evaluation': 'not_configured',
         },
         'document_parsing': {'supported_extensions': SUPPORTED_PARSERS, 'ocr': True, 'vision_fallback': True},
