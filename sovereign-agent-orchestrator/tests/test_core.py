@@ -1165,3 +1165,66 @@ def test_a_short_but_correct_vision_reading_is_kept(tmp_path):
     assert hits, 'the nameplate should be findable'
     assert 'PUMP P-101' in hits[0]['content']
     assert 'no machine-readable text' not in hits[0]['content']
+
+def test_redact_pii_on_docx_writes_a_real_docx_without_the_pii(tmp_path):
+	# Reading a .docx as text gets zip bytes: the regexes match nothing and the
+	# file written back is a corrupt archive still carrying the personal data.
+	from docx import Document
+	from app.tools.registry import ToolRegistry
+	from app.workspace.manager import Workspace
+	workspace = Workspace(str(tmp_path))
+	source = workspace.safe('job1', 'input/addendum.docx', True)
+	document = Document()
+	document.add_paragraph('Notices are served on Meera Raghavan at meera.raghavan@kaveripumps.example')
+	document.add_paragraph('or on +91 98200 41127 during working hours.')
+	table = document.add_table(rows=1, cols=1)
+	table.rows[0].cells[0].text = 'Escalation: arun.deshpande@ktps.example'
+	document.save(str(source))
+
+	result = ToolRegistry(workspace).execute('job1', 'redact_pii', {'path': 'input/addendum.docx'})
+	assert result['redactions'] == 3
+
+	out = workspace.root / 'job1' / result['path']
+	assert out.suffix == '.docx'
+	written = Document(str(out))
+	text = '\n'.join(p.text for p in written.paragraphs)
+	text += '\n' + '\n'.join(c.text for t in written.tables for r in t.rows for c in r.cells)
+	assert 'meera.raghavan@kaveripumps.example' not in text
+	assert 'arun.deshpande@ktps.example' not in text
+	assert '98200 41127' not in text
+	assert '[REDACTED_EMAIL]' in text and '[REDACTED_PHONE]' in text
+	assert 'Meera Raghavan' in text  # names are not in the patterns; only contact details go
+
+def test_redact_pii_on_text_is_unchanged(tmp_path):
+	from app.tools.registry import ToolRegistry
+	from app.workspace.manager import Workspace
+	workspace = Workspace(str(tmp_path))
+	source = workspace.safe('job2', 'input/notes.txt', True)
+	source.write_text('reach me at ops@example.com or +91 98200 41127\n')
+	result = ToolRegistry(workspace).execute('job2', 'redact_pii', {'path': 'input/notes.txt'})
+	assert result['redactions'] == 2
+	body = (workspace.root / 'job2' / result['path']).read_text()
+	assert '[REDACTED_EMAIL]' in body and '[REDACTED_PHONE]' in body
+	assert 'ops@example.com' not in body
+
+def test_redact_pii_catches_contacts_split_across_runs(tmp_path):
+	# Word splits a paragraph at every formatting change, so an address is often
+	# spread over several runs and matches nothing when examined run by run.
+	from docx import Document
+	from app.tools.registry import ToolRegistry
+	from app.workspace.manager import Workspace
+	workspace = Workspace(str(tmp_path))
+	source = workspace.safe('job3', 'input/split.docx', True)
+	document = Document()
+	paragraph = document.add_paragraph()
+	paragraph.add_run('write to meera.')
+	paragraph.add_run('raghavan@kaveri')
+	paragraph.add_run('pumps.example today')
+	document.save(str(source))
+
+	result = ToolRegistry(workspace).execute('job3', 'redact_pii', {'path': 'input/split.docx'})
+	assert result['redactions'] == 1
+	out = workspace.root / 'job3' / result['path']
+	text = '\n'.join(p.text for p in Document(str(out)).paragraphs)
+	assert 'meera.raghavan@kaveripumps.example' not in text
+	assert '[REDACTED_EMAIL]' in text
