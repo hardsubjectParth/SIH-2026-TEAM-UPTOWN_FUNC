@@ -8,6 +8,7 @@ import AgentTasksPage from './pages/AgentTasksPage'
 import KnowledgeBasePage from './pages/KnowledgeBasePage'
 import IngestKnowledgePage from './pages/IngestKnowledgePage'
 import ArtifactsPage from './pages/ArtifactsPage'
+import DashboardPage from './pages/DashboardPage'
 
 function PageTransition({ children }: { children: React.ReactNode }) {
   return (
@@ -56,6 +57,7 @@ function App() {
         <Routes location={location} key={location.pathname}>
           <Route path="/login" element={<Login />} />
 
+          <Route path="/app" element={<Shell><PageTransition><DashboardPage /></PageTransition></Shell>} />
           <Route path="/app/feed" element={<Shell><PageTransition><IntelligenceFeedPage /></PageTransition></Shell>} />
           <Route path="/app/feed/:id" element={<Shell><PageTransition><IntelligenceFeedPage /></PageTransition></Shell>} />
           <Route path="/app/tasks" element={<Shell><PageTransition><AgentTasksPage /></PageTransition></Shell>} />
@@ -63,8 +65,8 @@ function App() {
           <Route path="/app/knowledge/ingest" element={<Shell><PageTransition><IngestKnowledgePage /></PageTransition></Shell>} />
           <Route path="/app/artifacts" element={<Shell><PageTransition><ArtifactsPage /></PageTransition></Shell>} />
 
-          <Route path="/" element={<Navigate to="/app/feed" replace />} />
-          <Route path="*" element={<Navigate to="/app/feed" replace />} />
+          <Route path="/" element={<Navigate to="/app" replace />} />
+          <Route path="*" element={<Navigate to="/app" replace />} />
         </Routes>
       </AnimatePresence>
     </MotionConfig>

@@ -24,7 +24,7 @@ function ApprovalGate({ job, onResolved }: { job: Job; onResolved: () => void })
   }
 
   return (
-    <div className="border-hairline mt-4 rounded-2xl border-warning/35 bg-surface px-5 py-4">
+    <div className="border-hairline mt-3 border-accent/40 bg-surface px-4 py-3.5">
       <p className="text-sm font-semibold text-foreground">Human approval required</p>
       <p className="label-micro mt-2">Action</p>
       <p className="text-sm text-foreground">{job.plan?.[job.plan.length - 1]?.description ?? 'Generate artifact'}</p>
@@ -33,14 +33,12 @@ function ApprovalGate({ job, onResolved }: { job: Job; onResolved: () => void })
 
       {error ? <p className="mt-2 text-xs text-danger">{error}</p> : null}
 
-      <div className="mt-3 flex justify-end gap-2">
-        <button type="button" disabled={busy} onClick={() => decide(false)} className="rounded-lg border border-white/12 px-4 py-2 text-xs text-muted-foreground transition hover:text-foreground disabled:opacity-50">
-          Reject
-        </button>
-        <button type="button" disabled={busy} onClick={() => decide(true)} className="rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground transition hover:bg-primary-hover disabled:opacity-50">
-          Approve
-        </button>
-      </div>
+      {user?.role === 'lower' ? <p className="mt-3 text-xs text-muted-foreground">An Operations Reviewer or Workspace Administrator must approve this action.</p> : (
+        <div className="mt-3 flex justify-end gap-2">
+          <button type="button" disabled={busy} onClick={() => decide(false)} className="border border-white/12 px-3.5 py-1.5 text-xs text-muted-foreground transition hover:text-foreground disabled:opacity-50">Reject</button>
+          <button type="button" disabled={busy} onClick={() => decide(true)} className="action-primary px-3.5 py-1.5 text-xs">Approve</button>
+        </div>
+      )}
     </div>
   )
 }

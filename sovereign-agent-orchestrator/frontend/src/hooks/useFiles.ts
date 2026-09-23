@@ -14,8 +14,8 @@ export function useFiles() {
 
 export function useFileScopes() {
   const { token } = useAuth()
-  const { data } = useSWR(token ? ['upload-scopes', token] : null, ([, authToken]) => getUploadScopes(authToken))
-  return data?.scopes ?? []
+  const { data, error, isLoading } = useSWR(token ? ['upload-scopes', token] : null, ([, authToken]) => getUploadScopes(authToken))
+  return { scopes: data?.scopes ?? [], error, isLoading }
 }
 
 export function useUploadFile() {

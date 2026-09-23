@@ -3,121 +3,65 @@ import type { FormEvent } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { useAuth } from '../context/AuthContext'
-
-// The backend's dev-login only recognizes three fixed accounts (admin/higher/lower --
-// app/dev_auth.py), not an arbitrary email. A free-text "protocol identifier" field
-// per the mockup would just fail against the real auth -- kept the console styling,
-// swapped the input for the same role selector the working login already used.
-const ACCOUNTS = [
-  { value: 'admin', label: 'admin@sovereign.io' },
-  { value: 'higher', label: 'higher@sovereign.io' },
-  { value: 'lower', label: 'lower@sovereign.io' },
-]
+import AppearanceControls from './shell/AppearanceControls'
 
 function Login() {
   const { isLoggedIn, login } = useAuth()
   const navigate = useNavigate()
-  const [username, setUsername] = useState('admin')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [unlocking, setUnlocking] = useState(false)
 
-  if (isLoggedIn && !unlocking) return <Navigate to="/app/feed" replace />
+  if (isLoggedIn && !unlocking) return <Navigate to="/app" replace />
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError(null)
     setSubmitting(true)
     try {
-      await login(username, password)
+      await login(email, password)
       setUnlocking(true)
-      window.setTimeout(() => navigate('/app/feed', { replace: true }), 220)
+      window.setTimeout(() => navigate('/app', { replace: true }), 220)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unable to sign in')
       setSubmitting(false)
     }
   }
 
-  const fieldClass =
-    'w-full rounded-xl border border-white/8 bg-background px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-accent/50'
-
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-6 py-12">
-      {/* Concentric halo bleeding off the top-left corner, per the mockup. */}
-      <div
-        className="pointer-events-none absolute -top-40 -left-40 h-[620px] w-[620px] rounded-full opacity-60"
-        style={{ background: 'radial-gradient(circle, rgba(143,184,156,0.07), transparent 62%)' }}
-      />
-      <div
-        className="pointer-events-none absolute inset-0"
-        style={{ background: 'radial-gradient(ellipse at center, rgba(143,184,156,0.045), transparent 60%)' }}
-      />
-
-      <motion.div
-        animate={unlocking ? { scale: 0.98, opacity: 0 } : { scale: 1, opacity: 1 }}
-        transition={{ duration: 0.2 }}
-        className="relative w-full max-w-[420px]"
-      >
-        <div className="text-center">
-          <h1 className="font-display text-[34px] leading-none font-bold tracking-tight text-foreground">Sovereign AI</h1>
-          <p className="label-wide mt-4">Intelligence Protocol Access</p>
+    <main className="login-page flex min-h-screen flex-col text-foreground">
+      <header className="flex items-center justify-between border-b border-white/10 px-6 py-5 sm:px-10">
+        <div className="flex items-center gap-3"><span aria-hidden="true" className="brand-mark flex size-9 items-center justify-center border border-accent/40 bg-[#36242a] font-mono font-semibold text-accent">S/</span><div><p className="text-[13px] font-semibold tracking-[0.01em]">SOVEREIGN</p><p className="font-mono text-[9px] uppercase tracking-[0.16em] text-muted-foreground">Operations / AI</p></div></div>
+        <AppearanceControls />
+      </header>
+      <div className="mx-auto grid w-full max-w-[1240px] flex-1 items-center gap-12 px-6 py-12 sm:px-10 md:grid-cols-[minmax(0,1fr)_minmax(350px,0.9fr)] md:gap-10 lg:gap-20 lg:py-20">
+        <div className="hidden max-w-[570px] flex-col items-start md:flex">
+          <p className="label-micro text-accent">A considered way to work</p>
+          <h2 className="mt-6 text-[clamp(3.3rem,6vw,5.8rem)] font-medium leading-[1.03] tracking-[-0.065em]">Intelligence,<br />under your<br /><span className="text-accent">control.</span></h2>
+          <p className="mt-8 max-w-sm border-l border-accent/45 pl-5 text-sm leading-7 text-muted-foreground">One workspace for your tasks, knowledge, reviews and generated work. Every action remains visible in context.</p>
+          <div className="mt-16 flex w-full items-center gap-4 border-t border-white/10 pt-5 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground"><span className="text-accent">01 / Access</span><span className="h-px flex-1 bg-white/10" /><span>02 / Workspace</span></div>
         </div>
-
-        <div className="mt-10 rounded-2xl bg-surface/40 p-6">
-          <div className="border-hairline rounded-2xl bg-surface px-8 py-9">
-            <h2 className="font-display text-[22px] leading-tight font-semibold text-foreground">Authorization Required</h2>
-
-            <form onSubmit={handleSubmit} className="mt-7 flex flex-col gap-5">
-              <label className="flex flex-col gap-2.5">
-                <span className="label-micro">Protocol Identifier</span>
-                <select value={username} onChange={(event) => setUsername(event.target.value)} className={fieldClass}>
-                  {ACCOUNTS.map((account) => <option value={account.value} key={account.value}>{account.label}</option>)}
-                </select>
-              </label>
-
-              <label className="flex flex-col gap-2.5">
-                <span className="label-micro">Access Token</span>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  required
-                  autoComplete="current-password"
-                  className={fieldClass}
-                  style={{ letterSpacing: password ? '0.25em' : 'normal' }}
-                />
-              </label>
-
-              {error ? <p className="text-xs text-danger" role="alert">{error}</p> : null}
-
-              <button
-                type="submit"
-                disabled={submitting}
-                className="mt-1 rounded-xl bg-primary px-4 py-3.5 text-sm font-semibold text-primary-foreground transition hover:bg-primary-hover hover:shadow-[0_0_24px_rgba(60,90,71,0.55)] disabled:opacity-60"
-              >
-                {submitting ? 'Initializing…' : 'Initialize Session'}
-              </button>
-            </form>
-
-            <div className="mt-7 border-t border-white/7 pt-6 text-center">
-              <p className="text-[13px] text-muted-foreground">New agent?</p>
-              <p className="mt-1 text-[15px] text-foreground">Request Access Protocol</p>
-            </div>
-          </div>
-
-          <div className="mt-7 flex items-center justify-center gap-10">
-            <span className="label-wide">Sovereign OS v4.2.0</span>
-            <span className="label-wide flex items-center gap-2">
-              <span
-                className="h-1.5 w-1.5 animate-status-pulse rounded-full bg-accent"
-                style={{ boxShadow: '0 0 6px var(--color-accent)' }}
-              />
-              Secure Connection Active
-            </span>
-          </div>
-        </div>
-      </motion.div>
+        <motion.section
+          animate={unlocking ? { y: -8, opacity: 0 } : { y: 0, opacity: 1 }}
+          transition={{ duration: 0.2 }}
+          aria-labelledby="sign-in-title"
+          className="protocol-surface w-full px-6 py-8 sm:px-9 sm:py-10"
+        >
+          <div className="flex items-center justify-between border-b border-white/10 pb-5"><p className="label-micro text-accent">Sign in / 01</p><span aria-hidden="true" className="font-mono text-xs text-accent/60">S / OS</span></div>
+          <h1 id="sign-in-title" className="mt-9 text-[32px] font-medium tracking-[-0.045em]">Welcome back<span className="text-accent">.</span></h1>
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">Use your account credentials to enter the workspace.</p>
+          <form onSubmit={handleSubmit} className="mt-9 flex flex-col gap-5">
+            <label className="flex flex-col gap-2"><span className="font-mono text-[10px] uppercase tracking-[0.13em] text-muted-foreground">Email address</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="username" placeholder="name@organization.com" className="w-full rounded-full border border-accent/20 bg-[#0c0d10]/85 px-5 py-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-accent/70" /></label>
+            <label className="flex flex-col gap-2"><span className="font-mono text-[10px] uppercase tracking-[0.13em] text-muted-foreground">Password</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required autoComplete="current-password" placeholder="Enter your password" className="w-full rounded-full border border-accent/20 bg-[#0c0d10]/85 px-5 py-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-accent/70" /></label>
+            {error ? <p className="border border-danger/20 bg-danger/5 px-3 py-2 text-xs text-danger" role="alert">{error}</p> : null}
+            <button type="submit" disabled={submitting} className="action-primary mt-2 w-full px-4 py-3 text-sm">{submitting ? 'Signing in…' : 'Enter workspace'} <span aria-hidden="true">→</span></button>
+          </form>
+          <p className="mt-9 border-t border-white/10 pt-5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Access level is assigned to your account.</p>
+        </motion.section>
+      </div>
+      <footer className="flex justify-between border-t border-white/10 px-6 py-4 font-mono text-[10px] uppercase tracking-widest text-muted-foreground sm:px-10"><span>Sovereign / Operations</span><span>Private workspace</span></footer>
     </main>
   )
 }

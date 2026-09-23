@@ -19,5 +19,7 @@ export function useConversation(conversationId?: string) {
     ([, id, authToken]) => getConversation(id, authToken),
     { refreshInterval: 4000 },
   )
-  return { conversation: data?.data, messages: data?.messages ?? [], error, isLoading, mutate }
+  // The server orders messages by UUID id, which isn't chronological -- sort by timestamp.
+  const messages = [...(data?.messages ?? [])].sort((a, b) => a.created_at.localeCompare(b.created_at))
+  return { conversation: data?.data, messages, error, isLoading, mutate }
 }

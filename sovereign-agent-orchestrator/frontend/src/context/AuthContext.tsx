@@ -1,30 +1,66 @@
-import { createContext, useContext, useMemo, useState } from 'react'
-import { devLogin, type User } from '../services/api'
+import { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import { devLogin, UNAUTHORIZED_EVENT, type User } from '../services/api'
+import { RANK } from '../components/shell/rank'
 
 type AuthContextType = {
   token: string | null
   user: User | null
   isLoggedIn: boolean
-  login: (username: string, password: string) => Promise<void>
+  login: (email: string, password: string) => Promise<void>
   logout: () => void
 }
 
+type Session = { token: string; user: User; expiresAt: number }
+
 const SESSION_KEY = 'sovereign-dev-session'
+const PREVIEW_MODE = import.meta.env.DEV
+const PREVIEW_ROLES = new Set<User['role']>(['admin', 'higher', 'lower'])
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [session, setSession] = useState<{ token: string; user: User } | null>(() => {
+function readStoredSession(): Session | null {
+  try {
     const stored = sessionStorage.getItem(SESSION_KEY)
-    return stored ? JSON.parse(stored) : null
-  })
+    if (!stored) return null
+    const parsed = JSON.parse(stored) as Partial<Session>
+    const valid = parsed.token && parsed.user && Object.hasOwn(RANK, parsed.user.role)
+      && typeof parsed.expiresAt === 'number' && parsed.expiresAt > Date.now()
+    if (!valid) { sessionStorage.removeItem(SESSION_KEY); return null }
+    return parsed as Session
+  } catch {
+    return null
+  }
+}
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [session, setSession] = useState<Session | null>(readStoredSession)
+
+  useEffect(() => {
+    if (!session) return
+    const clear = () => { sessionStorage.removeItem(SESSION_KEY); setSession(null) }
+    const timer = window.setTimeout(clear, Math.max(0, session.expiresAt - Date.now()))
+    window.addEventListener(UNAUTHORIZED_EVENT, clear)
+    return () => { window.clearTimeout(timer); window.removeEventListener(UNAUTHORIZED_EVENT, clear) }
+  }, [session])
 
   const value = useMemo<AuthContextType>(() => ({
     token: session?.token ?? null,
     user: session?.user ?? null,
     isLoggedIn: Boolean(session),
-    login: async (username, password) => {
-      const result = await devLogin(username, password)
-      const next = { token: result.access_token, user: result.user }
+    login: async (email, password) => {
+      if (PREVIEW_MODE) {
+        const requestedRole = email.trim().toLowerCase().split('@')[0]
+        const role = PREVIEW_ROLES.has(requestedRole as User['role']) ? requestedRole as User['role'] : 'admin'
+        const next: Session = {
+          token: `preview-${role}-token`,
+          user: { id: `preview-${role}`, role, tenant_id: 'preview-tenant' },
+          expiresAt: Date.now() + 1000 * 60 * 60 * 8,
+        }
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify(next))
+        setSession(next)
+        return
+      }
+      const result = await devLogin(email, password)
+      const next: Session = { token: result.access_token, user: result.user, expiresAt: Date.now() + result.expires_in * 1000 }
       sessionStorage.setItem(SESSION_KEY, JSON.stringify(next))
       setSession(next)
     },

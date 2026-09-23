@@ -85,7 +85,11 @@ class Store:
             context = job.get('user_context', {})
             if context.get('tenant_id') != identity['tenant_id']:
                 continue
-            if context.get('user_id') != identity['user_id'] and identity.get('role') != 'admin':
+            # Mirrors the visibility rule in routes.get_job: a reviewer also sees the
+            # jobs waiting on them, and only while they are waiting.
+            if (context.get('user_id') != identity['user_id']
+                    and identity.get('role') != 'admin'
+                    and not (identity.get('role') == 'higher' and job.get('status') == 'awaiting_approval')):
                 continue
             jobs.append(job)
         jobs.sort(key=lambda job: job.get('created_at') or '', reverse=True)
@@ -110,8 +114,13 @@ class Store:
 
     def files(self, identity, limit=100):
         with self.engine.connect() as db:
-            rows = db.execute(text('SELECT id,owner_id,tenant_id,name,path,metadata FROM files WHERE tenant_id=:tenant ORDER BY name LIMIT :limit'), {'tenant': identity['tenant_id'], 'limit': min(max(limit, 1), 100)}).fetchall()
-        return [self._row(row._mapping, metadata=self._decode(row.metadata)) for row in rows if row.owner_id == identity['user_id'] or identity.get('role') == 'admin']
+            # The owner check belongs in the query, not after it. Filtering in Python
+            # meant LIMIT was applied to every file in the tenant first, so a user
+            # whose own uploads happened to sort after 100 other people's saw a
+            # truncated list -- or none at all -- with no indication anything was
+            # missing.
+            rows = db.execute(text('SELECT id,owner_id,tenant_id,name,path,metadata FROM files WHERE tenant_id=:tenant AND (:is_admin = 1 OR owner_id = :owner) ORDER BY name LIMIT :limit'), {'tenant': identity['tenant_id'], 'owner': identity['user_id'], 'is_admin': 1 if identity.get('role') == 'admin' else 0, 'limit': min(max(limit, 1), 100)}).fetchall()
+        return [self._row(row._mapping, metadata=self._decode(row.metadata)) for row in rows]
 
     def user_storage_bytes(self, identity):
         with self.engine.connect() as db:

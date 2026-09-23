@@ -173,18 +173,36 @@ def list_jobs(limit: int = 20, identity: dict=Depends(current_identity)):
 def get_job(job_id, identity: dict=Depends(current_identity)):
  j=SERVICE.store.get(job_id)
  if not j: raise HTTPException(404,'JOB_NOT_FOUND')
- if j.get('user_context',{}).get('tenant_id') != identity['tenant_id'] or (j.get('user_context',{}).get('user_id') != identity['user_id'] and identity.get('role') != 'admin'): raise HTTPException(404,'JOB_NOT_FOUND')
+ context=j.get('user_context',{})
+ if context.get('tenant_id') != identity['tenant_id']: raise HTTPException(404,'JOB_NOT_FOUND')
+ # Own jobs always; anything in the tenant if admin; and, for a reviewer, another
+ # user's job only while it is waiting on them. Without this last clause enforcing
+ # who may approve leaves nobody able to see what needs approving. It is
+ # deliberately narrow: the same job in any other status stays invisible.
+ visible=(context.get('user_id')==identity['user_id']
+          or identity.get('role')=='admin'
+          or (identity.get('role')=='higher' and j.get('status')=='awaiting_approval'))
+ if not visible: raise HTTPException(404,'JOB_NOT_FOUND')
  return j
 @router.post('/agent/{job_id}/approve')
 async def approve(job_id,req:ApprovalRequest, identity: dict=Depends(current_identity)):
+ # The role is checked before the job is even looked up, so an analyst gets the
+ # same 403 whether or not the job exists -- otherwise the response distinguishes
+ # "not allowed" from "no such job" and becomes an existence oracle. The approval
+ # is always recorded against the verified token, never req.reviewer_user_id.
+ if identity.get('role') not in {'higher','admin'}: raise HTTPException(403,'APPROVAL_NOT_AUTHORIZED')
  j=get_job(job_id, identity)
  if not j: raise HTTPException(404,'JOB_NOT_FOUND')
  if j['status']!='awaiting_approval': raise HTTPException(409,'JOB_NOT_AWAITING_APPROVAL')
+ # A reviewer cannot clear their own job; an administrator can, because there is
+ # no one above them to ask and a deadlock would be worse than the concentration.
+ if identity.get('role')=='higher' and j.get('user_context',{}).get('user_id')==identity['user_id']: raise HTTPException(403,'SELF_APPROVAL_NOT_ALLOWED')
  await SERVICE.resume(j,req.approved,identity['user_id']); SERVICE.store.audit(identity['user_id'], identity['tenant_id'], 'approval_decision', job_id, {'approved': req.approved}); return {'job_id':job_id,'status':j['status']}
 @router.post('/agent/{job_id}/cancel')
 def cancel(job_id, identity: dict=Depends(current_identity)):
  j=get_job(job_id, identity)
  if not j: raise HTTPException(404,'JOB_NOT_FOUND')
+ if j['status'] in {'done','failed','cancelled'}: raise HTTPException(409,'JOB_ALREADY_FINISHED')
  j['status']='cancelled'; SERVICE.store.save(j); SERVICE._emit(j,'job_cancelled',{}); return {'job_id':job_id,'status':'cancelled'}
 @router.get('/agent/{job_id}/events')
 def events(job_id, identity: dict=Depends(current_identity)):

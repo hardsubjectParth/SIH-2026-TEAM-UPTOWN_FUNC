@@ -44,11 +44,11 @@ function StatCard({ label, value, accent = false, suffix = '' }: StatCardProps) 
   const isNumeric = typeof value === 'number'
   const animated = useCountUp(isNumeric ? value : 0)
   return (
-    <div className="border-hairline rounded-2xl bg-surface px-5 py-5">
-      <p className="label-micro">{label}</p>
-      <p className={`stat-number mt-3 text-[34px] leading-none font-medium ${accent ? 'text-accent' : 'text-foreground'}`}>
+    <div className="work-panel px-4 py-4">
+      <p className={`stat-number text-2xl font-semibold ${accent ? 'text-accent' : 'text-foreground'}`}>
         {isNumeric ? animated : value}{suffix}
       </p>
+      <p className="label-micro mt-1.5">{label}</p>
     </div>
   )
 }

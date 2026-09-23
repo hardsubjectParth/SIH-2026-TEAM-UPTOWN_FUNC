@@ -48,7 +48,9 @@ class Conversation(BaseModel):
 class Message(BaseModel):
     id: str|int; conversation_id: str; role: str; content: str; citations: list[Citation]=[]; created_at: str
 class ApprovalRequest(BaseModel):
-    approved: bool; reviewer_user_id: str
+    # reviewer_user_id is accepted for compatibility with existing callers and
+    # ignored: the reviewer recorded is always the one holding the token.
+    approved: bool; reviewer_user_id: str|None=None
 class RoutingDecision(BaseModel):
     task_type: str; model_id: str; confidence: float; reason: str; fallback_model_id: str|None=None
 class PlanStep(BaseModel):

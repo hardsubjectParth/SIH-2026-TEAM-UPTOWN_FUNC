@@ -1382,3 +1382,82 @@ def test_artifact_tasks_still_require_artifacts(tmp_path):
 	result = Verifier(str(tmp_path)).verify(job)
 	assert result['checks']['artifacts_exist'] is False
 	assert result['passed'] is False
+
+def test_a_reviewer_sees_only_the_jobs_waiting_on_them(tmp_path):
+	# Enforcing who may approve is useless if reviewers cannot see what needs
+	# approving -- but the window must be exactly that, not a general read.
+	from app.storage.store import Store
+	store = Store(f'sqlite:///{tmp_path / "store.db"}')
+	store.save({'job_id': 'own', 'status': 'done', 'task': 'mine', 'user_context': {'user_id': 'rev', 'tenant_id': 't1'}})
+	store.save({'job_id': 'pending', 'status': 'awaiting_approval', 'task': 'needs review', 'user_context': {'user_id': 'alice', 'tenant_id': 't1'}})
+	store.save({'job_id': 'other', 'status': 'done', 'task': 'not theirs', 'user_context': {'user_id': 'alice', 'tenant_id': 't1'}})
+	store.save({'job_id': 'foreign', 'status': 'awaiting_approval', 'task': 'other tenant', 'user_context': {'user_id': 'zed', 'tenant_id': 't2'}})
+
+	reviewer = {'user_id': 'rev', 'tenant_id': 't1', 'role': 'higher'}
+	analyst = {'user_id': 'rev', 'tenant_id': 't1', 'role': 'lower'}
+	assert {j['job_id'] for j in store.recent_jobs(reviewer)} == {'own', 'pending'}
+	# The tenant boundary still holds, and an analyst gains nothing.
+	assert {j['job_id'] for j in store.recent_jobs(analyst)} == {'own'}
+
+def test_file_listing_applies_the_owner_filter_before_the_limit(tmp_path):
+	# The limit used to be applied to every file in the tenant and the owner check
+	# afterwards in Python, so a user whose uploads sorted late saw none of them.
+	from app.storage.store import Store
+	store = Store(f'sqlite:///{tmp_path / "store.db"}')
+	for index in range(120):
+		store.register_file(f'other-{index:03}', 'bob', 't1', f'aaa-{index:03}.txt', '/tmp/x', {})
+	for index in range(5):
+		store.register_file(f'mine-{index}', 'alice', 't1', f'zzz-{index}.txt', '/tmp/x', {})
+
+	alice = {'user_id': 'alice', 'tenant_id': 't1', 'role': 'lower'}
+	listed = store.files(alice)
+	assert len(listed) == 5, 'a user must see all of their own files, not a truncated page'
+	assert all(record['name'].startswith('zzz-') for record in listed)
+
+def test_administrators_still_see_every_file_in_the_tenant(tmp_path):
+	from app.storage.store import Store
+	store = Store(f'sqlite:///{tmp_path / "store.db"}')
+	store.register_file('f1', 'alice', 't1', 'a.txt', '/tmp/x', {})
+	store.register_file('f2', 'bob', 't1', 'b.txt', '/tmp/x', {})
+	store.register_file('f3', 'zed', 't2', 'c.txt', '/tmp/x', {})
+	admin = {'user_id': 'root', 'tenant_id': 't1', 'role': 'admin'}
+	assert {record['id'] for record in store.files(admin)} == {'f1', 'f2'}
+
+def test_approval_request_ignores_a_body_supplied_reviewer(tmp_path):
+	# The field is still accepted so existing callers do not break, but it carries
+	# no authority: the route records identity['user_id'].
+	from app.schemas.contracts import ApprovalRequest
+	assert ApprovalRequest(approved=True).reviewer_user_id is None
+	assert ApprovalRequest(approved=True, reviewer_user_id='someone-else').approved is True
+
+def test_dev_login_accepts_an_email_or_a_bare_role(monkeypatch):
+	# The console's sign-in field is type="email", so a browser will not submit a
+	# bare "admin" -- the redesigned frontend could not log in at all until the
+	# local part was accepted. Scripts and the CLI still pass the role name.
+	import app.dev_auth as dev_auth
+	monkeypatch.setenv('DEV_AUTH_ENABLED', 'true')
+	monkeypatch.setenv('JWT_SECRET', 'x' * 40)
+	monkeypatch.setenv('DEV_ADMIN_PASSWORD', 'secret-admin')
+
+	def login(username, password):
+		return dev_auth.issue_dev_token(dev_auth.DevLoginRequest(username=username, password=password))
+
+	assert login('admin@sovereign.io', 'secret-admin').user['role'] == 'admin'
+	assert login('admin', 'secret-admin').user['role'] == 'admin'
+	assert login('ADMIN@Example.COM', 'secret-admin').user['role'] == 'admin'
+
+def test_dev_login_still_rejects_a_bad_password_or_unknown_account(monkeypatch):
+	# The domain carries no authority: accepting the local part decides which
+	# account is named, nothing more.
+	import pytest
+	from fastapi import HTTPException
+	import app.dev_auth as dev_auth
+	monkeypatch.setenv('DEV_AUTH_ENABLED', 'true')
+	monkeypatch.setenv('JWT_SECRET', 'x' * 40)
+	monkeypatch.setenv('DEV_ADMIN_PASSWORD', 'secret-admin')
+
+	for username, password in (('admin@sovereign.io', 'wrong'), ('nobody@sovereign.io', 'secret-admin')):
+		with pytest.raises(HTTPException) as raised:
+			dev_auth.issue_dev_token(dev_auth.DevLoginRequest(username=username, password=password))
+		assert raised.value.status_code == 401
+		assert raised.value.detail == 'INVALID_CREDENTIALS'

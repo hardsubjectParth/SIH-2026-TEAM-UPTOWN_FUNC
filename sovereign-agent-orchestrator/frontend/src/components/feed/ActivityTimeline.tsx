@@ -40,7 +40,7 @@ function ActivityTimeline({ events }: { events: JobEvent[] }) {
   const visible = events.filter((event) => event.type !== 'status_changed')
   if (!visible.length) return null
   return (
-    <div className="border-hairline mt-4 rounded-2xl bg-surface px-5 py-4">
+    <div className="border-hairline mt-3 bg-surface px-4 py-3">
       <p className="label-micro">Agent Activity</p>
       <div className="mt-2 flex flex-col gap-2">
         {visible.map((event) => (

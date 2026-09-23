@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import useSWR from 'swr'
 import { approveJob, cancelJob, getJob, listJobs, streamJobEvents } from '../services/api'
-import type { JobEvent } from '../types/api'
+import type { JobEvent, JobStatus } from '../types/api'
 import { useAuth } from '../context/AuthContext'
+
+const TERMINAL: JobStatus[] = ['done', 'failed', 'cancelled']
 
 // GET /agent?limit= -- a real aggregate endpoint the rebuild spec's §5 table didn't
 // know about (it suggested "poll each known job_id" as a fallback). Used for the
@@ -22,7 +24,7 @@ export function useJob(jobId?: string | null) {
   const { data, error, mutate } = useSWR(
     token && jobId ? ['job', jobId, token] : null,
     ([, id, authToken]) => getJob(id, authToken),
-    { refreshInterval: 1200 },
+    { refreshInterval: (latest) => (latest && TERMINAL.includes(latest.status) ? 0 : 1200) },
   )
   return { job: data, error, mutate }
 }

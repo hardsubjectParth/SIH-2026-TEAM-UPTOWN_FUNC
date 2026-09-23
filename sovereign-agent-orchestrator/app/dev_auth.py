@@ -35,7 +35,13 @@ def issue_dev_token(request: DevLoginRequest) -> DevLoginResponse:
         "higher": (os.getenv("DEV_HIGHER_PASSWORD", "higher-test-only"), "higher"),
         "lower": (os.getenv("DEV_LOWER_PASSWORD", "lower-test-only"), "lower"),
     }
-    account = accounts.get(request.username.strip().lower())
+    # The console signs in with an email address, so accept the local part as the
+    # account name: admin@anything resolves to "admin". A bare "admin" still works,
+    # which keeps the CLI and the existing scripts unchanged. This only decides
+    # which account is being named -- the password check below is untouched, and
+    # the domain carries no authority, so it is not a way in for anyone who does
+    # not already hold the account's password.
+    account = accounts.get(request.username.strip().lower().split('@', 1)[0])
     if not account or request.password != account[0]:
         raise HTTPException(401, "INVALID_CREDENTIALS")
 

@@ -1,41 +1,29 @@
 @import "tailwindcss";
 
-/* "Sovereign OS" command-console design system.
-   Neutral-dark ground, a single muted-forest accent, and a Playfair Display
-   serif reserved strictly for display headings (page titles, stat values,
-   assistant turn headers) against Geist for all body copy. Exposed as Tailwind
-   v4 theme tokens so components use bg-background / bg-surface / text-accent /
-   bg-primary / font-display directly.
+@font-face {
+  font-family: 'Rabelo';
+  src: url('/fonts/Rabelo-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
 
-   Two greens, deliberately: `primary` is the filled-button green (dark, carries
-   light text), `accent` is the readable sage used for accent *text*, hairlines
-   and indicators. Using one token for both gives either unreadable button text
-   or washed-out labels. */
+/* Near-black workspace with maroon/copper accents and distinct data signals. */
 @theme {
-  --color-background: #0A0C0B;
-  --color-surface: #121513;
-  --color-surface-raised: #191D1B;
-  --color-foreground: #E9ECEA;
-  --color-muted-foreground: #767D78;
+  --color-background: #090a0c;
+  --color-surface: #141619;
+  --color-surface-raised: #202126;
+  --color-foreground: #f3f0ed;
+  --color-muted-foreground: #aaa9ad;
+  --color-accent: #d6a288;
+  --color-accent-foreground: #231715;
+  --color-danger: #ed918b;
+  --color-success: #83c9b4;
+  --color-info: #91b8db;
+  --color-warning: #e4bc7c;
 
-  --color-primary: #3C5A47;
-  --color-primary-hover: #46684F;
-  --color-primary-foreground: #EDF3EF;
-  --color-accent: #8FB89C;
-
-  --color-danger: #D46A6A;
-  --color-info: #6E9BF0;
-  --color-success: #6FCF97;
-  --color-warning: #E3B341;
-
-  --font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
-  /* Was Playfair Display. A serif display face gave headings and -- worse -- stat
-     values a bookish look that read as decoration rather than instrumentation:
-     "0/0 checks passed" set in Georgia-like type next to a monospaced model id.
-     The display face is now the same sans as the body, differentiated by size and
-     weight instead of by family. */
-  --font-display: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-sans: 'Rabelo', sans-serif;
+  --font-mono: 'Rabelo', sans-serif;
 
   --animate-status-pulse: status-pulse 1.5s ease-in-out infinite;
   --animate-caret-blink: caret-blink 1s step-end infinite;
@@ -58,65 +46,154 @@
   color-scheme: dark;
 }
 
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --color-background: #f1f2f4;
+  --color-surface: #ffffff;
+  --color-surface-raised: #e8eaed;
+  --color-foreground: #202129;
+  --color-muted-foreground: #545965;
+  --color-accent: #864955;
+  --color-accent-foreground: #ffffff;
+  --color-danger: #b23e48;
+  --color-success: #187559;
+  --color-info: #24689d;
+  --color-warning: #8a5a0f;
+}
+
 body {
+  font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0, 'clig' 0, 'calt' 0;
   margin: 0;
-  min-width: 320px;
+  min-width: 280px;
   min-height: 100vh;
   background: var(--color-background);
   color: var(--color-foreground);
   font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
 }
 
 button, input, textarea, select {
   font: inherit;
 }
 
-/* Border convention: 1px hairline, not shadows. */
-.border-hairline {
-  border: 1px solid rgba(255, 255, 255, 0.07);
+.chat-typing, .chat-typing::placeholder {
+  font-family: Arial, Calibri, sans-serif;
+  font-weight: 400;
+  letter-spacing: normal;
+  line-height: 1.5;
 }
+
+.main-window {
+  zoom: var(--main-window-zoom, 1);
+}
+
+.workspace-toolbar {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(19, 20, 24, 0.76);
+  backdrop-filter: blur(24px) saturate(1.5);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+}
+.appearance-controls {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 8px 24px rgba(0,0,0,0.12);
+  backdrop-filter: blur(24px) saturate(1.5);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+}
+.appearance-control { min-height: 36px; color: var(--color-foreground); transition: background 160ms ease; }
+.appearance-control:hover { background: rgba(255,255,255,0.13); }
+
+/* Glass is a quiet highlight on neutral charcoal, not a maroon wash. */
+.border-hairline { border: 1px solid rgba(232, 229, 226, 0.12); }
+
+:root[data-theme='light'] .border-hairline { border-color: rgba(45, 46, 57, 0.15); }
+:root[data-theme='light'] .app-page,
+:root[data-theme='light'] .login-page { background: radial-gradient(ellipse at 70% 0%, rgba(165, 112, 123, 0.12), transparent 45%), var(--color-background); }
+:root[data-theme='light'] .work-panel {
+  border-color: rgba(66, 62, 75, 0.13);
+  background: linear-gradient(145deg, rgba(255,255,255,0.93), rgba(249,249,251,0.82));
+  box-shadow: inset 0 1px 0 #fff, 0 10px 28px rgba(35, 32, 46, 0.06);
+}
+:root[data-theme='light'] .protocol-surface {
+  border-color: rgba(97, 77, 84, 0.17);
+  background: linear-gradient(145deg, rgba(255,255,255,0.96), rgba(246,246,249,0.88));
+  box-shadow: inset 0 1px 0 #fff, 0 20px 48px rgba(35, 32, 46, 0.09);
+}
+:root[data-theme='light'] .workspace-toolbar { background: rgba(255,255,255,0.65); border-bottom-color: rgba(43,44,53,0.12); }
+:root[data-theme='light'] .appearance-controls { border-color: rgba(43,44,53,0.15); background: rgba(255,255,255,0.75); box-shadow: inset 0 1px 0 #fff, 0 8px 24px rgba(35,32,46,0.07); }
+:root[data-theme='light'] .appearance-control:hover { background: rgba(43,44,53,0.09); }
+:root[data-theme='light'] .sidebar-shell { background: rgba(250,250,252,0.82); border-color: rgba(43,44,53,0.12); }
+:root[data-theme='light'] .brand-mark { background: #f4e5e7; border-color: rgba(134,73,85,0.24); color: #743746; }
+:root[data-theme='light'] .sidebar-shell a:hover { background-color: rgba(43,44,53,0.07); }
+:root[data-theme='light'] .sidebar-shell a[aria-current='page'] { background: rgba(134,73,85,0.13); border-color: rgba(134,73,85,0.26); color: var(--color-foreground); }
+:root[data-theme='light'] input:not([type='file']) { background-color: rgba(255,255,255,0.75); color: var(--color-foreground); }
+:root[data-theme='light'] .border-white\/10, :root[data-theme='light'] .border-white\/8, :root[data-theme='light'] .border-white\/12 { border-color: rgba(43,44,53,0.13); }
+:root[data-theme='light'] .bg-white\/5, :root[data-theme='light'] .bg-white\/10 { background-color: rgba(43,44,53,0.045); }
+:root[data-theme='light'] .text-white { color: var(--color-foreground); }
+:root[data-theme='light'] .markdown blockquote { border-left-color: rgba(43,44,53,0.2); }
+:root[data-theme='light'] ::selection { background: #e4c0c8; color: #202129; }
+
+.app-page, .login-page {
+  background: radial-gradient(ellipse at 88% 0%, rgba(94, 39, 43, 0.1), transparent 38%),
+              var(--color-background);
+}
+
+.work-panel {
+  border: 1px solid rgba(235, 233, 230, 0.1);
+  border-radius: 20px;
+  background: linear-gradient(145deg, rgba(35, 37, 42, 0.8), rgba(18, 20, 24, 0.88));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 12px 32px rgba(0, 0, 0, 0.14);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.protocol-surface {
+  border: 1px solid rgba(214, 162, 136, 0.2);
+  border-radius: 24px;
+  background: linear-gradient(145deg, rgba(49, 42, 43, 0.81), rgba(19, 20, 24, 0.94) 52%);
+  box-shadow: inset 0 1px 0 rgba(255, 228, 207, 0.06), 0 18px 48px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.action-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px solid rgba(226, 175, 148, 0.48);
+  border-radius: 999px;
+  background: linear-gradient(135deg, #774247, #512c34);
+  color: #fff1e9;
+  font-weight: 600;
+  box-shadow: inset 0 1px 0 rgba(255, 229, 212, 0.13), 0 5px 18px rgba(0, 0, 0, 0.18);
+  transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+}
+.action-primary:hover:not(:disabled) { background: #864d53; border-color: rgba(244, 202, 182, 0.8); transform: translateY(-1px); box-shadow: 0 9px 22px rgba(0, 0, 0, 0.25); }
+.action-primary:active:not(:disabled) { transform: translateY(0); }
+.action-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.action-primary:focus-visible, a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+
+::selection { background: #754950; color: #fff; }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: #46454a; border: 2px solid #090a0c; border-radius: 5px; }
+::-webkit-scrollbar-track { background: #090a0c; }
 
 /* Uppercase tracked-out micro-labels ("SECURE CONNECTION ACTIVE" etc.) */
 .label-micro {
   text-transform: uppercase;
   letter-spacing: 0.12em;
-  font-family: var(--font-sans);
-  font-size: 10px;
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 11px;
   color: var(--color-muted-foreground);
 }
 
-/* Widest tracking, reserved for the login wordmark subtitle and status footers. */
-.label-wide {
-  text-transform: uppercase;
-  letter-spacing: 0.3em;
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--color-muted-foreground);
-}
-
-/* The display face is the body sans at a larger size, so it needs the negative
-   tracking a display serif got from its own design. */
-.font-display {
-  letter-spacing: -0.02em;
-}
-
-/* Tabular numerals so digits don't jitter as stats poll and update. */
+/* Tabular numerals for stat cards so digits don't jitter on update. */
 .stat-number {
-  font-family: var(--font-display);
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
 }
-
-/* Thin, dark scrollbars -- the default light track is very loud on this ground. */
-.scroll-slim {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
-}
-.scroll-slim::-webkit-scrollbar { width: 8px; height: 8px; }
-.scroll-slim::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 999px; }
-.scroll-slim::-webkit-scrollbar-track { background: transparent; }
 
 @media (prefers-reduced-motion: reduce) {
   * {
@@ -134,25 +211,25 @@ html.motion-paused .animate-status-pulse {
 /* Rendered markdown inside assistant turns. */
 .markdown {
   color: var(--color-foreground);
-  font-size: 14.5px;
-  line-height: 1.75;
+  font-size: 14px;
+  line-height: 1.7;
 }
 .markdown > :first-child { margin-top: 0; }
 .markdown > :last-child { margin-bottom: 0; }
-.markdown p { margin: 0 0 14px; }
-.markdown h1, .markdown h2, .markdown h3 { margin: 20px 0 10px; color: var(--color-foreground); line-height: 1.3; font-family: var(--font-display); font-weight: 600; letter-spacing: -0.01em; }
-.markdown h1 { font-size: 21px; }
-.markdown h2 { font-size: 18px; }
-.markdown h3 { font-size: 15px; }
-.markdown ul, .markdown ol { margin: 0 0 14px; padding-left: 20px; }
-.markdown li { margin: 4px 0; }
+.markdown p { margin: 0 0 12px; }
+.markdown h1, .markdown h2, .markdown h3 { margin: 18px 0 8px; color: var(--color-foreground); line-height: 1.3; }
+.markdown h1 { font-size: 20px; }
+.markdown h2 { font-size: 17px; }
+.markdown h3 { font-size: 14px; }
+.markdown ul, .markdown ol { margin: 0 0 12px; padding-left: 20px; }
+.markdown li { margin: 3px 0; }
 .markdown a { color: var(--color-accent); }
-.markdown strong { color: var(--color-foreground); font-weight: 600; }
-.markdown blockquote { margin: 0 0 14px; padding: 2px 0 2px 12px; border-left: 2px solid rgba(255,255,255,0.12); color: var(--color-muted-foreground); }
-.markdown code { padding: 2px 5px; border-radius: 4px; background: rgba(255,255,255,0.06); color: var(--color-accent); font-family: var(--font-mono); font-size: 12px; }
-.markdown pre { margin: 0 0 14px; padding: 12px 14px; border-radius: 10px; background: var(--color-background); border: 1px solid rgba(255,255,255,0.07); overflow-x: auto; }
+.markdown strong { color: var(--color-foreground); }
+.markdown blockquote { margin: 0 0 12px; padding: 2px 0 2px 12px; border-left: 2px solid rgba(255,255,255,0.12); color: var(--color-muted-foreground); }
+.markdown code { padding: 2px 5px; border-radius: 3px; background: rgba(255,255,255,0.06); color: var(--color-accent); font-family: var(--font-mono); font-size: 12px; }
+.markdown pre { margin: 0 0 12px; padding: 12px 14px; background: var(--color-background); border: 1px solid rgba(255,255,255,0.08); overflow-x: auto; }
 .markdown pre code { padding: 0; background: none; color: var(--color-foreground); }
-.markdown table { width: 100%; margin: 0 0 14px; border-collapse: collapse; font-size: 13px; display: block; overflow-x: auto; }
-.markdown th, .markdown td { padding: 8px 11px; border: 1px solid rgba(255,255,255,0.07); text-align: left; }
+.markdown table { width: 100%; margin: 0 0 12px; border-collapse: collapse; font-size: 13px; display: block; overflow-x: auto; }
+.markdown th, .markdown td { padding: 7px 10px; border: 1px solid rgba(255,255,255,0.08); text-align: left; }
 .markdown th { background: rgba(255,255,255,0.04); color: var(--color-foreground); font-weight: 600; }
-.markdown hr { margin: 18px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.07); }
+.markdown hr { margin: 16px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.08); }

@@ -85,10 +85,9 @@ export interface JobSummary {
   status: JobStatus
   created_at?: string
   task_type?: string
-  conversation_id?: string | null
   model_id?: string
   model_name?: string
-  artifacts: JobArtifact[]
+  artifacts: string[]
   final_answer?: string
   error?: string
   verification_passed?: boolean
@@ -126,13 +125,4 @@ export interface KnowledgeSearchResult {
   content: string
   metadata: Record<string, string>
   score: number
-}
-
-// GET /ready -- unauthenticated liveness detail. `checks` covers database,
-// workspace, disk headroom and (in ollama mode) whether the configured chat and
-// embedding models are actually installed.
-export interface Readiness {
-  status: 'ready' | 'degraded'
-  checks: Record<string, boolean>
-  errors: string[]
 }
