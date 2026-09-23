@@ -21,7 +21,18 @@ from pypdf import PdfReader
 from sqlalchemy import create_engine, text
 
 
-SUPPORTED_EXTENSIONS = {'.txt', '.md', '.pdf', '.docx', '.pptx', '.csv', '.xlsx', '.xlsm', '.png', '.jpg', '.jpeg', '.tiff', '.bmp'}
+# Source and config files are plain text, so reading them needs nothing new. What
+# they do need is a different chunker: the prose one collapses all whitespace,
+# which for Python -- where indentation is syntax -- destroys the thing being
+# indexed. See _chunks_code.
+CODE_EXTENSIONS = {
+    '.py', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.java', '.go', '.rs',
+    '.c', '.h', '.cpp', '.hpp', '.cs', '.rb', '.php', '.swift', '.kt', '.scala',
+    '.sh', '.bash', '.zsh', '.sql', '.json', '.yaml', '.yml', '.toml', '.ini',
+    '.cfg', '.xml', '.html', '.css', '.scss', '.env', '.dockerfile', '.tf',
+}
+
+SUPPORTED_EXTENSIONS = {'.txt', '.md', '.pdf', '.docx', '.pptx', '.csv', '.xlsx', '.xlsm', '.png', '.jpg', '.jpeg', '.tiff', '.bmp'} | CODE_EXTENSIONS
 
 # Uploads are stored on disk as "<uuid4>_<original filename>"; index and cite the
 # original name so evidence lists read cleanly.
@@ -153,7 +164,11 @@ class RagService:
     def extract(self, path):
         path = Path(path)
         suffix = path.suffix.lower()
-        if suffix in {'.txt', '.md'}:
+        if suffix in {'.txt', '.md'} or suffix in CODE_EXTENSIONS:
+            # errors='ignore' already covers the odd non-UTF8 source file, and a
+            # binary wearing a code extension degrades to mojibake rather than
+            # raising -- it will simply retrieve badly, which is the right
+            # failure for something nobody should have uploaded.
             return path.read_text(errors='ignore')
         if suffix == '.pdf':
             pages = []
@@ -314,6 +329,55 @@ class RagService:
             return f'[OCR unavailable: install Tesseract or configure Ollama vision: {exc}]'
 
     @staticmethod
+    def _chunks_code(text, max_lines=60, max_chars=1600, overlap_lines=8):
+        """Chunk source on line boundaries, keeping newlines and indentation.
+
+        The prose chunker starts with ``re.sub(r'\\s+', ' ', text)``, which turns
+
+            def resolve_upload_tier(role, scope):
+                if scope not in options:
+                    raise HTTPException(422, ...)
+
+        into one flat line where the body of the ``if`` and the statement after it
+        are no longer distinguishable. For Python that is not lossy formatting,
+        it is loss of meaning, and the model is then reasoning about code that
+        could never have run.
+
+        Chunks are bounded by lines *and* characters, because one long generated
+        line can carry more text than a whole screen of ordinary source.
+        """
+        lines = text.splitlines()
+        if not lines:
+            return []
+        # A minified bundle or a one-line JSON blob has no line structure to
+        # preserve, and line-based chunking would emit a single chunk far larger
+        # than the embedding model accepts. Those are better served by the
+        # character chunker they would otherwise bypass.
+        if max(len(line) for line in lines) > max_chars:
+            return RagService._chunks(text)
+        result = []
+        start = 0
+        while start < len(lines):
+            end, length = start, 0
+            while end < len(lines) and end - start < max_lines and length + len(lines[end]) + 1 <= max_chars:
+                length += len(lines[end]) + 1
+                end += 1
+            end = max(end, start + 1)  # always consume at least one line
+            chunk = '\n'.join(lines[start:end]).strip()
+            if chunk:
+                result.append(chunk)
+            if end >= len(lines):
+                break
+            start = max(end - overlap_lines, start + 1)
+        return result
+
+    @classmethod
+    def _chunks_for(cls, path, text):
+        """Pick the chunker by file type, leaving every existing format as it was."""
+        return (cls._chunks_code(text) if Path(path).suffix.lower() in CODE_EXTENSIONS
+                else cls._chunks(text))
+
+    @staticmethod
     def _chunks(text, size=1200, overlap=150):
         text = re.sub(r'\s+', ' ', text).strip()
         if not text:
@@ -378,7 +442,7 @@ class RagService:
                             vision_text if len(scanned) == page_count
                             else extracted_text + '\n' + vision_text
                         )
-        chunks = self._chunks(extracted_text)
+        chunks = self._chunks_for(path, extracted_text)
         document_id = str(uuid.uuid4())
         vectors = [await self._embed(chunk) for chunk in chunks]
         if self.is_postgres and any(vector and len(vector) != self.embedding_dimensions for vector in vectors):
@@ -401,7 +465,7 @@ class RagService:
             if existing:
                 return {'document_id': existing[0], 'name': _display_name(path, metadata), 'chunks': 0, 'embedded': 0, 'existing': True}
         extracted_text = self.extract(path)
-        chunks = self._chunks(extracted_text)
+        chunks = self._chunks_for(path, extracted_text)
         document_id = str(uuid.uuid4())
         with self.engine.begin() as db:
             db.execute(text('INSERT INTO rag_documents(id,name,mime_type,checksum,metadata) VALUES(:id,:name,:mime,:checksum,' + ('CAST(:metadata AS JSONB)' if self.is_postgres else ':metadata') + ')'), {'id': document_id, 'name': _display_name(path, metadata), 'mime': metadata.get('mime_type'), 'checksum': checksum, 'metadata': json.dumps(metadata)})

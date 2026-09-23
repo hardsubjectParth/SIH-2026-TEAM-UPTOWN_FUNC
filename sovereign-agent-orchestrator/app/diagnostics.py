@@ -10,7 +10,13 @@ import yaml
 from sqlalchemy import text
 
 
-SUPPORTED_PARSERS = ['txt', 'md', 'pdf', 'docx', 'pptx', 'csv', 'xlsx', 'xlsm', 'png', 'jpg', 'jpeg', 'tiff', 'bmp']
+# Derived from the extractor rather than restated, because a second copy of this
+# list is a copy that goes stale: adding source files to SUPPORTED_EXTENSIONS
+# would otherwise leave /system/capabilities advertising the old set, which is
+# the same way 'reranking' came to report a value the code contradicted.
+from app.rag.service import SUPPORTED_EXTENSIONS
+
+SUPPORTED_PARSERS = sorted(extension.lstrip('.') for extension in SUPPORTED_EXTENSIONS)
 
 
 def _gpu_info():

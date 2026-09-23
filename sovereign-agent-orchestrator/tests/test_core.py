@@ -1165,3 +1165,44 @@ def test_a_short_but_correct_vision_reading_is_kept(tmp_path):
     assert hits, 'the nameplate should be findable'
     assert 'PUMP P-101' in hits[0]['content']
     assert 'no machine-readable text' not in hits[0]['content']
+
+def test_rag_indexes_source_files_keeping_lines_and_indentation(tmp_path):
+	# The prose chunker collapses all whitespace, which for Python discards the
+	# indentation that carries the meaning. Source has to survive as source.
+	source = tmp_path / 'access.py'
+	source.write_text("def resolve(role, scope):\n    if scope not in options:\n        raise HTTPException(422)\n    return options[scope]\n")
+	rag = RagService(f'sqlite:///{tmp_path / "rag.db"}')
+	assert 'resolve' in rag.extract(source)
+	import asyncio
+	assert asyncio.run(rag.ingest(source))['chunks'] == 1
+	hits = asyncio.run(rag.search('resolve scope'))
+	assert hits[0]['source'] == 'access.py'
+	assert '\n    if scope not in options:' in hits[0]['content']
+
+def test_prose_documents_keep_the_original_chunking(tmp_path):
+	# Same bytes, non-code extension: the existing behaviour must not shift,
+	# because every retrieval measurement was taken against it.
+	text = "def resolve(role, scope):\n    return options[scope]\n"
+	assert '\n' not in RagService._chunks_for(Path('notes.txt'), text)[0]
+	assert '\n' in RagService._chunks_for(Path('access.py'), text)[0]
+
+def test_minified_source_falls_back_to_character_chunks():
+	# One line of megabytes has no structure to preserve, and line-based chunking
+	# would emit a single chunk larger than the embedding model accepts.
+	chunks = RagService._chunks_for(Path('bundle.min.js'), 'var a=1;' * 900)
+	assert len(chunks) > 1
+	assert max(len(chunk) for chunk in chunks) <= 1200
+
+def test_long_source_file_chunks_overlap(tmp_path):
+	chunks = RagService._chunks_for(Path('big.py'), '\n'.join(f'line_{i} = {i}' for i in range(200)))
+	assert len(chunks) > 1
+	# Consecutive chunks share trailing context, so a definition split across a
+	# boundary is still retrievable from one side of it.
+	assert chunks[1].splitlines()[0] in chunks[0]
+
+def test_unsupported_extension_is_still_rejected(tmp_path):
+	import pytest
+	source = tmp_path / 'archive.zip'
+	source.write_bytes(b'PK\x03\x04')
+	with pytest.raises(ValueError, match='UNSUPPORTED_DOCUMENT_TYPE'):
+		RagService(f'sqlite:///{tmp_path / "rag.db"}').extract(source)
