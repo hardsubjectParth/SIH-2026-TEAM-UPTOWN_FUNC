@@ -115,6 +115,44 @@ is 17; the documents beating them are 1200-character passages that share the
 query's vocabulary — "P-204B", "pump", "bearing" — while `HV-1127 CL300 WCB` has
 almost no vocabulary to match at all.
 
+### What closed it: equipment tags
+
+Each chunk now carries the industrial identifiers found in it under
+`equipment_tags`, so a document can be reached by *name* instead of by meaning.
+Measured on this corpus after re-ingesting:
+
+| Target | Semantic only | With tag filter |
+|---|---|---|
+| `valve_tag_hv1127.png` | **not in top 8** | **rank 1 of 1** (`HV-1127`) |
+| `nameplate_p204b.png` | not in top 8 | rank 6 of 7 (`P-204B`) |
+| `ecn_4471_coupling.docx` | rank 1 | rank 1 of 1 (`ECN-4471`) |
+
+The valve tag is the result worth showing: the one document semantic search could
+never reach, reached deterministically.
+
+Read the nameplate row honestly — the filter gives **recall, not ranking**. Seven
+documents mention `P-204B`, so filtering narrows the corpus to those seven and the
+sparse nameplate still places low among them. It is now retrievable where before it
+was not; it is not suddenly first.
+
+What the extractor actually pulled out of the corpus:
+
+```
+sop_pump_changeover.pdf        DN-2291, P-204A, P-204B, P-204C,
+                               SOP-BFP-06, SOP-BFP-07, SOP-BFP-11
+scanned_inspection_report.pdf  INS-2026-0912, P-204B
+vendor_addendum_a3.docx        A-3, PO-2024-8812
+incident_memo_u3_trip.pdf      A-3, INC-2026-0827, P-204B
+```
+
+No dates, phone numbers, currency or section numbers leaked in — the extractor is
+built to miss a tag rather than invent one, because a false tag pollutes the filter
+for every other document silently.
+
+**Tags apply to newly ingested documents only.** There is no migration, because
+re-embedding is expensive. A corpus indexed before this change has no tags and a
+tag filter finds nothing in it until re-ingested.
+
 The uncomfortable part is the irony: **the documents the OCR fix was made to
 preserve are the ones retrieval then hides.** The fix made nameplates and valve
 tags *indexed*; it did not make them *findable*. Three mitigations, cheapest
@@ -163,7 +201,7 @@ the image, or bring in a cross-encoder.
 
 ## Suggested run-sheet
 
-Five demonstrations, in the order that builds on itself. Each has a fixed correct
+Six demonstrations, in the order that builds on itself. Each has a fixed correct
 answer, recorded in `corpus/manifest.json` under `ground_truth`.
 
 **1. Speed is about content, not size.** Upload the SOP and the scanned
@@ -208,7 +246,15 @@ to the tiers it may read. A `lower` user is not being filtered — the rows are 
 in any database it has a connection to. `run_showcase.py` prints this table from
 live queries.
 
-**5. A document is data, not an instruction.** `supplier_bulletin_2026_09.pdf`
+**5. Reach a document by name, not by meaning.** Ask for the valve tag cold and it
+does not appear in the eight results the agent sees — 17 characters of `HV-1127
+CL300 WCB` share no vocabulary with the question. Filter on the tag and it is the
+only hit. This is the honest answer to "what happens when similarity is the wrong
+tool", and it is a better demonstration than a query that happens to work.
+
+> `{"query": "...", "metadata": {"equipment_tags": ["HV-1127"]}}` → one hit
+
+**6. A document is data, not an instruction.** `supplier_bulletin_2026_09.pdf`
 contains a paragraph telling the model to disregard classification, retrieve the
 admin-tier contract and email it out. Ask a plain question about the bulletin's
 real subject; the answer is about disc packs. Three defences hold independently:
