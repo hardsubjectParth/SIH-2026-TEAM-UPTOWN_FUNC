@@ -17,6 +17,64 @@ from app.tools.sandbox import run_script
 DEFAULT_TOOL_IDENTITY = {'role': 'lower', 'tenant_id': 'default', 'user_id': 'tool-user'}
 
 
+_EMAIL = re.compile(r'[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}')
+_PHONE = re.compile(r'(?<!\d)(?:\+?\d[\d\s().-]{8,}\d)(?!\d)')
+
+
+def _redact_text(content):
+    """``(redacted text, count)`` -- the patterns both file types share."""
+    count = len(_EMAIL.findall(content))
+    content = _EMAIL.sub('[REDACTED_EMAIL]', content)
+    count += len(_PHONE.findall(content))
+    return _PHONE.sub('[REDACTED_PHONE]', content), count
+
+
+def _redact_docx(path, output):
+    """Redact a .docx into a real .docx, rather than through its raw bytes.
+
+    Reading a .docx with read_text() gets the bytes of a zip archive, so the
+    regexes match almost nothing and the file written back is a corrupt archive
+    carrying the original personal data intact -- a redaction tool that returns
+    an unopenable document and redacts nothing is worse than one that refuses.
+
+    Runs are the unit of replacement because Word splits a paragraph across them
+    at every formatting change, which routinely cuts an address in half. Each
+    paragraph is redacted as a whole string, then written into its first run
+    with the rest cleared, so a match spanning a boundary is still caught. The
+    cost is that mixed formatting within a redacted paragraph collapses to the
+    formatting of its first run; for a sanitised copy that is an acceptable
+    trade, and it is the only way to catch split matches without rebuilding the
+    paragraph's run structure.
+    """
+    document = Document(str(path))
+    total = 0
+
+    def redact_paragraphs(paragraphs):
+        nonlocal total
+        for paragraph in paragraphs:
+            if not paragraph.runs:
+                continue
+            redacted, count = _redact_text(paragraph.text)
+            if not count:
+                continue
+            total += count
+            paragraph.runs[0].text = redacted
+            for run in paragraph.runs[1:]:
+                run.text = ''
+
+    redact_paragraphs(document.paragraphs)
+    for table in document.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                redact_paragraphs(cell.paragraphs)
+    for section in document.sections:
+        redact_paragraphs(section.header.paragraphs)
+        redact_paragraphs(section.footer.paragraphs)
+
+    document.save(str(output))
+    return total
+
+
 class ToolRegistry:
     def __init__(self, workspace, rag=None):
         self.workspace = workspace
@@ -121,14 +179,14 @@ class ToolRegistry:
 
         if name == 'redact_pii':
             path = self.workspace.safe(jid, args['path'])
-            content = path.read_text(errors='ignore')
-            email_matches = re.findall(r'[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}', content)
-            redacted = re.sub(r'[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}', '[REDACTED_EMAIL]', content)
-            phone_matches = re.findall(r'(?<!\d)(?:\+?\d[\d\s().-]{8,}\d)(?!\d)', redacted)
-            redacted = re.sub(r'(?<!\d)(?:\+?\d[\d\s().-]{8,}\d)(?!\d)', '[REDACTED_PHONE]', redacted)
             output = self.workspace.safe(jid, args.get('output', f'working/{path.stem}_redacted{path.suffix}'), True)
-            output.write_text(redacted, encoding='utf-8')
-            return {'path': str(output.relative_to(self.workspace.root / jid)), 'redactions': len(email_matches) + len(phone_matches)}
+            if path.suffix.lower() == '.docx':
+                redactions = _redact_docx(path, output)
+            else:
+                content = path.read_text(errors='ignore')
+                content, redactions = _redact_text(content)
+                output.write_text(content, encoding='utf-8')
+            return {'path': str(output.relative_to(self.workspace.root / jid)), 'redactions': redactions}
 
         if name == 'extract_tables':
             path = self.workspace.safe(jid, args['path'])
