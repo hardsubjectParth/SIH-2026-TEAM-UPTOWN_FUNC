@@ -1268,3 +1268,70 @@ def test_redact_pii_catches_contacts_split_across_runs(tmp_path):
 	text = '\n'.join(p.text for p in Document(str(out)).paragraphs)
 	assert 'meera.raghavan@kaveripumps.example' not in text
 	assert '[REDACTED_EMAIL]' in text
+
+def test_equipment_tag_extractor_finds_real_tags():
+	from app.rag.service import extract_equipment_tags
+	assert extract_equipment_tags('Boiler feed pump P-204B and standby P-204A.') == ['P-204A', 'P-204B']
+	assert extract_equipment_tags('HV-1127 CL300 WCB') == ['HV-1127']
+	assert extract_equipment_tags('Report number: INS-2026-0912') == ['INS-2026-0912']
+	assert extract_equipment_tags('note ECN-4471 against TK-07 and HX-3B') == ['ECN-4471', 'HX-3B', 'TK-07']
+	# Without a two-segment prefix this matches at BFP-07, an identifier that
+	# appears nowhere in the document it was taken from.
+	assert extract_equipment_tags('procedure SOP-BFP-07 applies') == ['SOP-BFP-07']
+
+def test_equipment_tag_extractor_rejects_lookalikes():
+	# A false tag is worse than a missed one: it pollutes the filter for every
+	# other document, silently.
+	from app.rag.service import extract_equipment_tags
+	assert extract_equipment_tags('Date of survey: 2026-09-12') == []          # date
+	assert extract_equipment_tags('call +91 98200 41127 today') == []          # phone
+	assert extract_equipment_tags('damages of INR 18,00,000 apply') == []      # currency
+	assert extract_equipment_tags('see section 7.1 on page 3') == []           # section/page
+	assert extract_equipment_tags('a follow-up-2 and a well-2 reading') == []  # lowercase
+	assert extract_equipment_tags('effective SEP-2026 and DEC-2025') == []     # month
+	assert extract_equipment_tags('the COVID-19 protocol') == []               # long prefix
+	assert extract_equipment_tags('disc pack 41-7720 superseded') == []        # no prefix
+
+def test_equipment_tags_are_capped_per_chunk():
+	from app.rag.service import extract_equipment_tags
+	assert len(extract_equipment_tags(' '.join(f'P-{i}' for i in range(200)))) == 32
+
+def test_ingested_chunks_carry_their_own_tags(tmp_path):
+	import asyncio
+	source = tmp_path / 'survey.txt'
+	source.write_text('Pump P-204B exceeded alarm. Valve HV-1127 was isolated.\n')
+	rag = RagService(f'sqlite:///{tmp_path / "rag.db"}')
+	asyncio.run(rag.ingest(source, {'tenant_id': 't1', 'file_id': 'f1'}))
+	hits = asyncio.run(rag.search('pump'))
+	tags = hits[0]['metadata']['equipment_tags']
+	assert 'P-204B' in tags and 'HV-1127' in tags
+	# Adding a key must not disturb what was already filtered on.
+	assert hits[0]['metadata']['file_id'] == 'f1'
+	assert hits[0]['metadata']['tenant_id'] == 't1'
+
+def test_tag_filter_selects_only_matching_chunks(tmp_path):
+	import asyncio
+	rag = RagService(f'sqlite:///{tmp_path / "rag.db"}')
+	pump = tmp_path / 'pump.txt'
+	pump.write_text('Pump P-204B bearing temperature rose over four shifts.\n')
+	valve = tmp_path / 'valve.txt'
+	valve.write_text('Valve HV-1127 was isolated for the changeover.\n')
+	asyncio.run(rag.ingest(pump, {'tenant_id': 't1'}))
+	asyncio.run(rag.ingest(valve, {'tenant_id': 't1'}))
+
+	found = asyncio.run(rag.search('anything', metadata={'equipment_tags': ['HV-1127']}))
+	assert [hit['source'] for hit in found] == ['valve.txt']
+	found = asyncio.run(rag.search('anything', metadata={'equipment_tags': ['P-204B']}))
+	assert [hit['source'] for hit in found] == ['pump.txt']
+	assert asyncio.run(rag.search('anything', metadata={'equipment_tags': ['X-999']})) == []
+
+def test_scalar_metadata_filters_are_unaffected_by_list_support(tmp_path):
+	import asyncio
+	rag = RagService(f'sqlite:///{tmp_path / "rag.db"}')
+	source = tmp_path / 'a.txt'
+	source.write_text('Pump P-204B reading.\n')
+	asyncio.run(rag.ingest(source, {'tenant_id': 't1', 'file_id': 'f1'}))
+	assert asyncio.run(rag.search('pump', metadata={'tenant_id': 't1'}))
+	assert asyncio.run(rag.search('pump', metadata={'tenant_id': 'other'})) == []
+	assert asyncio.run(rag.search('pump', metadata={'file_id': 'f1'}))
+	assert asyncio.run(rag.search('pump', metadata={'file_id': 'nope'})) == []

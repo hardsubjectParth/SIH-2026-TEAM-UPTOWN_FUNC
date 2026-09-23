@@ -32,6 +32,42 @@ CODE_EXTENSIONS = {
     '.cfg', '.xml', '.html', '.css', '.scss', '.env', '.dockerfile', '.tf',
 }
 
+# Equipment tags: the identifiers that P&IDs, SOPs and inspection reports use for a
+# specific asset -- P-204B, HV-1127, TK-07, ECN-4471. Semantic search is poor at
+# these. A transcribed valve tag is a dozen characters sharing no vocabulary with
+# "which valve is on the discharge line", so it loses on embedding distance no
+# matter how the scores are blended; an exact tag filter sidesteps ranking entirely.
+#
+# Shape: an uppercase prefix, a separator, a number, optionally a second number
+# group (INS-2026-0912) or a trailing unit letter (P-204B). The prefix may itself
+# be two segments (SOP-BFP-07) -- without that the match starts at the last letter
+# group and yields BFP-07, an identifier that appears nowhere in the document.
+#
+# Deliberately NOT matched, because a false tag is worse than a missed one -- it
+# silently pollutes the filter for every other document:
+#   - dates (2026-09-12): no leading uppercase prefix, so the pattern cannot start
+#   - month-prefixed dates (SEP-2026): shape matches, so months are stoplisted
+#   - phone numbers (+91 98200 41127), currency (INR 18,00,000): no prefix-hyphen
+#   - section and page numbers (7.1, Page 3): dot separator, or no separator
+#   - lowercase hyphenation (well-2, follow-up-3): prefix must be uppercase
+#   - long words (COVID-19): prefix capped at 4 characters
+_EQUIPMENT_TAG = re.compile(r'\b([A-Z]{1,4}(?:-[A-Z]{1,4})?)-(\d{1,4}(?:-\d{1,6})?[A-Z]?)\b')
+
+# Month abbreviations share the tag shape exactly and are always dates, never assets.
+_TAG_STOPWORDS = {'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'SEPT', 'OCT', 'NOV', 'DEC'}
+
+# A pathological document (a parts catalogue, a bill of materials) could otherwise
+# put thousands of tags in one chunk's metadata column.
+_MAX_TAGS_PER_CHUNK = 32
+
+
+def extract_equipment_tags(text):
+    """Sorted, de-duplicated equipment identifiers found in one chunk of text."""
+    tags = {f'{prefix}-{number}' for prefix, number in _EQUIPMENT_TAG.findall(text or '')
+            if prefix.split('-')[0] not in _TAG_STOPWORDS}
+    return sorted(tags)[:_MAX_TAGS_PER_CHUNK]
+
+
 SUPPORTED_EXTENSIONS = {'.txt', '.md', '.pdf', '.docx', '.pptx', '.csv', '.xlsx', '.xlsm', '.png', '.jpg', '.jpeg', '.tiff', '.bmp'} | CODE_EXTENSIONS
 
 # Uploads are stored on disk as "<uuid4>_<original filename>"; index and cite the
@@ -160,6 +196,10 @@ class RagService:
                     FOREIGN KEY(document_id) REFERENCES rag_documents(id)
                 )'''))
             db.execute(text('CREATE INDEX IF NOT EXISTS idx_rag_chunks_document ON rag_chunks(document_id)'))
+            if self.is_postgres:
+                # GIN is the index type that `@>` containment can actually use; the
+                # btree above does nothing for metadata filters.
+                db.execute(text('CREATE INDEX IF NOT EXISTS idx_rag_chunks_metadata ON rag_chunks USING GIN (metadata)'))
 
     def extract(self, path):
         path = Path(path)
@@ -451,7 +491,10 @@ class RagService:
             db.execute(text('INSERT INTO rag_documents(id,name,mime_type,checksum,metadata) VALUES(:id,:name,:mime,:checksum,' + ('CAST(:metadata AS JSONB)' if self.is_postgres else ':metadata') + ')'), {'id': document_id, 'name': _display_name(path, metadata), 'mime': metadata.get('mime_type'), 'checksum': checksum, 'metadata': json.dumps(metadata)})
             for index, (chunk, vector) in enumerate(zip(chunks, vectors)):
                 embedding = json.dumps(vector) if vector else None
-                db.execute(text('INSERT INTO rag_chunks(id,document_id,chunk_index,content,embedding,metadata) VALUES(:id,:document,:index,:content,' + ('CAST(:embedding AS vector)' if self.is_postgres else ':embedding') + ',' + ('CAST(:metadata AS JSONB)' if self.is_postgres else ':metadata') + ')'), {'id': str(uuid.uuid4()), 'document': document_id, 'index': index, 'content': chunk, 'embedding': embedding, 'metadata': json.dumps(metadata)})
+                # Per chunk, so a filter finds the chunk holding the tag rather than
+                # every chunk of any document that mentions it once.
+                chunk_metadata = {**metadata, 'equipment_tags': extract_equipment_tags(chunk)}
+                db.execute(text('INSERT INTO rag_chunks(id,document_id,chunk_index,content,embedding,metadata) VALUES(:id,:document,:index,:content,' + ('CAST(:embedding AS vector)' if self.is_postgres else ':embedding') + ',' + ('CAST(:metadata AS JSONB)' if self.is_postgres else ':metadata') + ')'), {'id': str(uuid.uuid4()), 'document': document_id, 'index': index, 'content': chunk, 'embedding': embedding, 'metadata': json.dumps(chunk_metadata)})
         return {'document_id': document_id, 'name': _display_name(path, metadata), 'chunks': len(chunks), 'embedded': sum(vector is not None for vector in vectors)}
 
     def ingest_sync(self, path, metadata=None):
@@ -470,7 +513,8 @@ class RagService:
         with self.engine.begin() as db:
             db.execute(text('INSERT INTO rag_documents(id,name,mime_type,checksum,metadata) VALUES(:id,:name,:mime,:checksum,' + ('CAST(:metadata AS JSONB)' if self.is_postgres else ':metadata') + ')'), {'id': document_id, 'name': _display_name(path, metadata), 'mime': metadata.get('mime_type'), 'checksum': checksum, 'metadata': json.dumps(metadata)})
             for index, chunk in enumerate(chunks):
-                db.execute(text('INSERT INTO rag_chunks(id,document_id,chunk_index,content,embedding,metadata) VALUES(:id,:document,:index,:content,NULL,' + ('CAST(:metadata AS JSONB)' if self.is_postgres else ':metadata') + ')'), {'id': str(uuid.uuid4()), 'document': document_id, 'index': index, 'content': chunk, 'metadata': json.dumps(metadata)})
+                chunk_metadata = {**metadata, 'equipment_tags': extract_equipment_tags(chunk)}
+                db.execute(text('INSERT INTO rag_chunks(id,document_id,chunk_index,content,embedding,metadata) VALUES(:id,:document,:index,:content,NULL,' + ('CAST(:metadata AS JSONB)' if self.is_postgres else ':metadata') + ')'), {'id': str(uuid.uuid4()), 'document': document_id, 'index': index, 'content': chunk, 'metadata': json.dumps(chunk_metadata)})
         return {'document_id': document_id, 'name': _display_name(path, metadata), 'chunks': len(chunks), 'embedded': 0}
 
     async def _vision_chat(self, client, payload, timeout=None):
@@ -543,13 +587,33 @@ class RagService:
         query_words = set(re.findall(r'\w+', query.lower()))
         for chunk_id, document_id, content, embedding, chunk_metadata, name in rows:
             item_metadata = _decode_json(chunk_metadata, {})
-            if metadata and any(item_metadata.get(key) != value for key, value in metadata.items()):
+            if metadata and not self._metadata_matches(item_metadata, metadata):
                 continue
             if file_ids is not None and item_metadata.get('file_id') not in file_ids:
                 continue
             score = self._cosine(query_vector, _decode_json(embedding, [])) if query_vector and embedding else self._lexical(query_words, content)
             scored.append({'chunk_id': chunk_id, 'document_id': document_id, 'source': name, 'content': content, 'score': round(score, 6), 'metadata': item_metadata, 'retrieval_method': 'embedding' if query_vector and embedding else 'lexical'})
         return self._rerank(query, scored, top_k)
+
+    @staticmethod
+    def _metadata_matches(item_metadata, filters):
+        """Whether a chunk's metadata satisfies a filter, matching JSONB containment.
+
+        Postgres evaluates these with `c.metadata @> :filter`, where a list value
+        means "contains all of these" rather than "equals this list". The
+        non-Postgres path compared with plain equality, so a tag filter of
+        {'equipment_tags': ['P-101']} could never match a chunk carrying
+        ['P-101', 'V-204'] -- the two backends would have disagreed about what the
+        same query means.
+        """
+        for key, value in filters.items():
+            actual = item_metadata.get(key)
+            if isinstance(value, list):
+                if not isinstance(actual, list) or not set(value).issubset(actual):
+                    return False
+            elif actual != value:
+                return False
+        return True
 
     def _rerank(self, query, candidates, top_k):
         query_words = set(re.findall(r'\w+', query.lower()))
