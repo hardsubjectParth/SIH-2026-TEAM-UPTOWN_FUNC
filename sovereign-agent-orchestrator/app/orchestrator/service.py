@@ -764,10 +764,25 @@ class Orchestrator:
             self._emit(j, 'plan_created', {'steps': j['plan'], 'iteration': attempt})
 
             if j['routing']['task_type'] == 'general':
+                # A question answers straight from the model and its retrieved
+                # context -- no tools, no artifacts. It still goes through the
+                # verifier rather than stamping itself passed, because otherwise
+                # REQUIRE_EVIDENCE cannot apply to the one kind of task most
+                # likely to answer from nothing, and 'every answer is checked'
+                # would be untrue of exactly the path users spend their time on.
                 j['final_answer'] = j['model_response'].get('content', str(j['model_response']))
-                j['verification'] = {'passed': True, 'checks': {}, 'notes': []}
-                self._status(j, JobStatus.done)
-                self._emit(j, 'job_completed', {'final_answer': j['final_answer']})
+                v = self._finish_checks(j)
+                if v['passed']:
+                    self._status(j, JobStatus.done)
+                    self._emit(j, 'job_completed', {'final_answer': j['final_answer']})
+                    return
+                if attempt < max_iterations:
+                    feedback = '; '.join(v.get('notes') or ['verification failed']) + \
+                        ' Failed checks: ' + ', '.join(k for k, ok in v['checks'].items() if not ok)
+                    self._emit(j, 'replanning', {'iteration': attempt, 'notes': v.get('notes', []), 'checks': v['checks']})
+                    continue
+                j['error'] = f'Verification failed after {max_iterations} attempt(s)'
+                self._status(j, JobStatus.failed)
                 return
 
             outcome = self._execute_steps(j)

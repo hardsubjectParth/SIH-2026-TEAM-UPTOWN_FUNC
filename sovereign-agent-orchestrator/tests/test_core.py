@@ -1335,3 +1335,50 @@ def test_scalar_metadata_filters_are_unaffected_by_list_support(tmp_path):
 	assert asyncio.run(rag.search('pump', metadata={'tenant_id': 'other'})) == []
 	assert asyncio.run(rag.search('pump', metadata={'file_id': 'f1'}))
 	assert asyncio.run(rag.search('pump', metadata={'file_id': 'nope'})) == []
+
+def _general_job(tmp_path, retrieval):
+	return {
+		'job_id': 'j-general', 'task_type': 'general', 'plan': [],
+		'observations': [], 'artifacts': [], 'tool_calls': [],
+		'retrieval': retrieval,
+	}
+
+def test_a_question_is_verified_not_stamped_passed(tmp_path):
+	# General tasks used to short-circuit with {'passed': True, 'checks': {}} and
+	# never reach the verifier, so REQUIRE_EVIDENCE could not apply to the one
+	# path users spend all their time on.
+	from app.verification.verifier import Verifier
+	result = Verifier(str(tmp_path)).verify(_general_job(tmp_path, [{'chunk_id': 'c1', 'source': 'sop.pdf'}]))
+	assert result['checks'], 'a question must produce real checks, not an empty dict'
+	assert result['checks']['evidence_grounded'] is True
+	# A question writes no files and runs no plan; those checks are not-applicable
+	# for it, the way citations_present already is outside a document workflow.
+	assert result['checks']['artifacts_exist'] is True
+	assert result['checks']['plan_completed'] is True
+	assert result['passed'] is True
+
+def test_an_ungrounded_question_is_blocked_when_evidence_is_required(tmp_path, monkeypatch):
+	monkeypatch.setenv('REQUIRE_EVIDENCE', 'true')
+	from app.verification.verifier import Verifier
+	result = Verifier(str(tmp_path)).verify(_general_job(tmp_path, []))
+	assert result['checks']['evidence_grounded'] is False
+	assert result['passed'] is False
+	assert 'evidence_grounded' in result['notes'][0]
+
+def test_an_ungrounded_question_is_advisory_when_evidence_is_not_required(tmp_path, monkeypatch):
+	# Default deployment: the failure is still reported, it just does not block --
+	# some questions legitimately have no corpus to ground against.
+	monkeypatch.setenv('REQUIRE_EVIDENCE', 'false')
+	from app.verification.verifier import Verifier
+	result = Verifier(str(tmp_path)).verify(_general_job(tmp_path, []))
+	assert result['checks']['evidence_grounded'] is False
+	assert result['passed'] is True
+
+def test_artifact_tasks_still_require_artifacts(tmp_path):
+	# The general-task escapes must not weaken any other task type.
+	from app.verification.verifier import Verifier
+	job = _general_job(tmp_path, [{'chunk_id': 'c1', 'source': 'sop.pdf'}])
+	job['task_type'] = 'document_workflow'
+	result = Verifier(str(tmp_path)).verify(job)
+	assert result['checks']['artifacts_exist'] is False
+	assert result['passed'] is False

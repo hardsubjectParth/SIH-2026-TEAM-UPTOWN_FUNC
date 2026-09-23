@@ -41,9 +41,12 @@ class Verifier:
 
         retrieved_hits = [hit for observation in observations for hit in observation.get('hits', []) if isinstance(observation, dict) and isinstance(hit, dict)]
         checks = {
-            'plan_completed': all(
-                x.get('status') == 'done'
-                for x in job.get('plan', [])
+            'plan_completed': (
+                job.get('task_type') == 'general'
+                or all(
+                    x.get('status') == 'done'
+                    for x in job.get('plan', [])
+                )
             ),
 
             'citations_present': (
@@ -53,7 +56,7 @@ class Verifier:
 
             'citation_sources_valid': all(bool(hit.get('chunk_id')) and bool(hit.get('source')) for hit in retrieved_hits),
 
-            'artifacts_exist': artifacts_exist,
+            'artifacts_exist': artifacts_exist or job.get('task_type') == 'general',
 
             'no_unhandled_denials': not any(
                 x.get('policy_decision') == 'deny'
@@ -66,7 +69,7 @@ class Verifier:
         # set, because some task types legitimately have no corpus to ground against.
         checks['evidence_grounded'] = (
             bool(job.get('retrieval'))
-            or job.get('task_type') not in {'document_workflow', 'multimodal'}
+            or job.get('task_type') not in {'document_workflow', 'multimodal', 'general'}
         )
 
         # Advisory only, never blocking: a legitimate SOP can quote an instruction, so a
