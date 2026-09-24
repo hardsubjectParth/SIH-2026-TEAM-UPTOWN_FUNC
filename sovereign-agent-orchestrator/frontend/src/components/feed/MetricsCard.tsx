@@ -29,7 +29,7 @@ function MetricsCard({ job }: { job: Job }) {
       <p className="label-micro">Intelligence Synthesis</p>
       {checks.length > 0 ? <div className="mt-4" role="progressbar" aria-label="Verification checks passed" aria-valuemin={0} aria-valuemax={checks.length} aria-valuenow={passed}>
         <div className="flex items-center justify-between text-xs"><span className="text-muted-foreground">Verification coverage</span><span className="stat-number text-success">{verificationPercent}%</span></div>
-        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-success transition-[width]" style={{ width: `${verificationPercent}%` }} /></div>
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-fill-strong"><div className="h-full rounded-full bg-success transition-[width]" style={{ width: `${verificationPercent}%` }} /></div>
       </div> : null}
       <div className="mt-2">
         {rows.map(([label, value], index) => <MetricRow key={label} label={label} value={value} index={index} />)}

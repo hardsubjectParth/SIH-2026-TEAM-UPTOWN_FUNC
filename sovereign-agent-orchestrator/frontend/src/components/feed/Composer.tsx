@@ -35,10 +35,13 @@ function Composer({ onSubmit, submitting }: ComposerProps) {
   }
 
   return (
-    <div className="border-t border-white/8 px-4 py-4 sm:px-6">
+    // The rule spans the window, but the input itself is capped at max-w-2xl to match
+    // the message column in IntelligenceFeedPage -- so it lines up with the turns it
+    // produces rather than running the full width of the workspace.
+    <div className="border-t border-rule px-4 py-4 sm:px-6">
       <form
         onSubmit={handleSubmit}
-        className={`work-panel !rounded-[28px] flex items-end gap-2 px-3 py-2 transition-colors ${focused ? 'border-accent shadow-[0_0_0_1px_var(--color-accent)]' : ''}`}
+        className={`work-panel !rounded-[28px] mx-auto flex w-full max-w-2xl items-end gap-2 px-3 py-2 transition-colors ${focused ? 'border-accent shadow-[0_0_0_1px_var(--color-accent)]' : ''}`}
       >
         <label htmlFor="composer-task" className="sr-only">Task instructions</label>
         <textarea
@@ -77,8 +80,8 @@ function Composer({ onSubmit, submitting }: ComposerProps) {
       </form>
 
       {files.length > 0 ? (
-        <ul aria-label="Attached files" className="mt-2 flex flex-wrap gap-1.5">
-          {files.map((file) => <li key={`${file.name}-${file.size}-${file.lastModified}`} className="border-hairline rounded-full bg-white/5 px-3 py-1 text-xs text-muted-foreground">{file.name}</li>)}
+        <ul aria-label="Attached files" className="mx-auto mt-2 flex w-full max-w-2xl flex-wrap gap-1.5">
+          {files.map((file) => <li key={`${file.name}-${file.size}-${file.lastModified}`} className="border-hairline rounded-full bg-fill px-3 py-1 text-xs text-muted-foreground">{file.name}</li>)}
         </ul>
       ) : null}
     </div>

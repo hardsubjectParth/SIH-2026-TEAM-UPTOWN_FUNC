@@ -65,10 +65,10 @@ function AgentTasksPage() {
       </div>
 
       <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label="In progress" value={active} accent />
-        <StatCard label="Completed" value={completed} />
-        <StatCard label="Awaiting approval" value={awaiting} />
-        <StatCard label="Success rate" value={successRate ?? '—'} suffix={successRate === null ? '' : '%'} accent />
+        <StatCard label="In progress" value={active} note="Running now" accent={active > 0} />
+        <StatCard label="Completed" value={completed} note="Finished successfully" />
+        <StatCard label="Awaiting approval" value={awaiting} note="Need a reviewer decision" />
+        <StatCard label="Success rate" value={successRate ?? '—'} suffix={successRate === null ? '' : '%'} note="Of completed or failed runs" accent />
       </div>
 
       <div className="mt-8">
@@ -78,7 +78,7 @@ function AgentTasksPage() {
               <Tabs.Trigger
                 key={item.value}
                 value={item.value}
-                className="shrink-0 rounded-full border border-accent/15 bg-white/4 px-4 py-2 text-xs text-muted-foreground transition-colors hover:bg-white/8 data-[state=active]:border-accent/50 data-[state=active]:bg-accent/15 data-[state=active]:text-foreground"
+                className="shrink-0 rounded-full border border-accent/15 bg-fill px-4 py-2 text-xs text-muted-foreground transition-colors hover:bg-fill data-[state=active]:border-accent/50 data-[state=active]:bg-accent/15 data-[state=active]:text-foreground"
               >
                 {item.label}
               </Tabs.Trigger>

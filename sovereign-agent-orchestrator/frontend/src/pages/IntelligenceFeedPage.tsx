@@ -94,14 +94,14 @@ function IntelligenceFeedPage() {
 
   return (
     <div className="app-page flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-4 border-b border-white/10 px-4 py-4 sm:px-8">
+      <div className="flex items-center gap-4 border-b border-rule px-4 py-4 sm:px-8">
         <span className="font-mono text-[10px] text-accent">02 /</span><h1 className="truncate text-sm font-medium text-foreground">{conversation?.title ?? 'New Session'}</h1>
       </div>
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-6 pb-10 sm:px-6">
         {historyMessages.length === 0 && !pendingTask ? (
           <div className="flex h-full flex-col items-center justify-center text-center">
-            <div className="border-hairline flex h-11 w-11 items-center justify-center text-sm font-semibold text-foreground">S</div>
+            <span aria-hidden="true" className="brand-mark flex size-11 items-center justify-center border border-accent/40 bg-[#36242a] font-mono text-lg font-semibold text-accent">S<span className="mb-3 text-[10px]">/</span></span>
             <h3 className="mt-5 text-lg font-medium text-foreground">What can I help you with?</h3>
             <p className="mt-2 max-w-sm text-sm text-muted-foreground">Instruct Sovereign Intelligence to analyze documents, search authorized knowledge, or synthesize a deliverable.</p>
           </div>

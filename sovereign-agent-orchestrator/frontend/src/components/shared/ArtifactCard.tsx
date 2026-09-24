@@ -54,8 +54,8 @@ function ArtifactCard({ jobId, artifact, generatedAt, layout = 'list' }: Artifac
       role="button"
       tabIndex={0}
       onClick={download}
-      onKeyDown={(event) => { if (event.key === 'Enter') download() }}
-      className={`border-hairline group cursor-pointer bg-surface px-3.5 py-3 transition-colors hover:border-accent/60 ${layout === 'grid' ? '' : 'flex items-center justify-between gap-4'}`}
+      onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); download() } }}
+      className={`border-hairline group cursor-pointer rounded-2xl bg-surface px-3.5 py-3 transition-colors hover:border-accent/60 ${layout === 'grid' ? '' : 'flex items-center justify-between gap-4'}`}
     >
       <div className="min-w-0">
         <p className="truncate font-mono text-sm text-foreground">{artifact.name}</p>
@@ -66,7 +66,13 @@ function ArtifactCard({ jobId, artifact, generatedAt, layout = 'list' }: Artifac
         </div>
         {error ? <p className="mt-1 text-xs text-danger">{error}</p> : null}
       </div>
-      <span className="label-micro shrink-0 text-accent opacity-0 transition-opacity group-hover:opacity-100">Download</span>
+      {/* Always visible. This was `opacity-0 group-hover:opacity-100`, which left the
+          card looking like inert text until you happened to hover it -- nothing said
+          the row was the download control. */}
+      <span aria-hidden="true" className={`flex shrink-0 items-center gap-1.5 rounded-full border border-rule px-3 py-1.5 text-xs text-muted-foreground transition-colors group-hover:border-accent/50 group-hover:text-accent ${layout === 'grid' ? 'mt-3 w-fit' : ''}`}>
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M8 2.5v8" /><path d="M4.5 7.5 8 11l3.5-3.5" /><path d="M2.75 13.25h10.5" /></svg>
+        Download
+      </span>
     </div>
   )
 }

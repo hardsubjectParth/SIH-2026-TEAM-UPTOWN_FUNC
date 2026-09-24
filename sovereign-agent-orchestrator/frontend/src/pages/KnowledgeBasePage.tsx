@@ -99,26 +99,30 @@ function KnowledgeBasePage() {
           {sorted.length === 0 ? <p className="text-sm text-muted-foreground">No documents uploaded yet.</p> : null}
           {sorted.map((file) => (
             <div key={file.id} className="work-panel px-4 py-3">
-              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-                <div className="min-w-0 flex-1 basis-48">
+              {/* A fixed grid, not flex-wrap + justify-between: the classification used
+                  to land wherever the filename left off, so "SHARED", "CONFIDENTIAL"
+                  and "RESTRICTED" each started at a different x down the list. Naming
+                  the column lines them all up. */}
+              <div className="grid items-center gap-x-4 gap-y-2 sm:grid-cols-[minmax(0,1fr)_9rem_auto]">
+                <div className="min-w-0">
                   <p className="truncate text-sm text-foreground">{file.name}</p>
                   <p className="mt-0.5 text-xs text-muted-foreground">
                     Modified {relativeTime(file.created_at)} · {formatSize(file.metadata.size_bytes)}
                   </p>
                 </div>
                 <TierLabel tier={file.metadata.visibility_tier ?? 'unknown'} />
-                <div className="flex shrink-0 items-center gap-3">
-                  <button type="button" aria-expanded={expanded === file.id} onClick={() => setExpanded(expanded === file.id ? null : file.id)} className="label-micro text-accent hover:underline">
-                    Details
+                <div className="flex shrink-0 items-center gap-2 justify-self-start sm:justify-self-end">
+                  <button type="button" aria-expanded={expanded === file.id} onClick={() => setExpanded(expanded === file.id ? null : file.id)} className="rounded-full border border-rule px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-fill hover:text-foreground">
+                    {expanded === file.id ? 'Hide' : 'Details'}
                   </button>
-                  <button type="button" disabled={busyId === file.id} onClick={() => remove(file.id, file.name)} className="label-micro text-danger hover:underline disabled:opacity-50">
+                  <button type="button" disabled={busyId === file.id} onClick={() => remove(file.id, file.name)} className="rounded-full border border-transparent px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-50">
                     {busyId === file.id ? 'Deleting…' : 'Delete'}
                   </button>
                 </div>
               </div>
 
               {expanded === file.id ? (
-                <div className="mt-3 grid grid-cols-2 gap-2 border-t border-white/8 pt-3 text-xs">
+                <div className="mt-3 grid grid-cols-2 gap-2 border-t border-rule pt-3 text-xs">
                   <div><span className="text-muted-foreground">File ID</span><p className="font-mono text-foreground">{file.id}</p></div>
                   <div><span className="text-muted-foreground">Type</span><p className="text-foreground">{file.metadata.mime_type ?? 'Unknown'}</p></div>
                   <div><span className="text-muted-foreground">Size</span><p className="text-foreground">{formatSize(file.metadata.size_bytes)}</p></div>
