@@ -38,17 +38,22 @@ function useCountUp(value: number, durationMs = 500) {
   return display
 }
 
-type StatCardProps = { label: string; value: number | string; accent?: boolean; suffix?: string }
+type StatCardProps = { label: string; value: number | string; accent?: boolean; suffix?: string; note?: string }
 
-function StatCard({ label, value, accent = false, suffix = '' }: StatCardProps) {
+// Same anatomy as the dashboard's MetricTile -- micro-label, then the figure, then an
+// optional note -- so the stat row on Agent Tasks and the one on the overview read as
+// one component. They used to be mirror images of each other: this one put the number
+// first and the label under it, which made the two pages look like different products.
+function StatCard({ label, value, accent = false, suffix = '', note }: StatCardProps) {
   const isNumeric = typeof value === 'number'
   const animated = useCountUp(isNumeric ? value : 0)
   return (
-    <div className="work-panel px-4 py-4">
-      <p className={`stat-number text-2xl font-semibold ${accent ? 'text-accent' : 'text-foreground'}`}>
+    <div className="work-panel flex min-w-0 flex-col px-4 py-5 sm:px-6 sm:py-6">
+      <p className="font-mono text-[10px] uppercase tracking-[0.13em] text-muted-foreground">{label}</p>
+      <p className={`stat-number mt-4 text-[30px] leading-none tracking-[-0.06em] sm:text-[36px] ${accent ? 'text-accent' : 'text-foreground'}`}>
         {isNumeric ? animated : value}{suffix}
       </p>
-      <p className="label-micro mt-1.5">{label}</p>
+      {note ? <p className="mt-auto pt-2 text-[11px] text-muted-foreground">{note}</p> : null}
     </div>
   )
 }

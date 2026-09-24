@@ -22,6 +22,20 @@
   --color-info: #91b8db;
   --color-warning: #e4bc7c;
 
+  /* Neutral scale for borders and fills. Every hairline, divider, resting fill and
+     hover fill in the app comes from these four, so a theme only has to redefine
+     them once -- see the light block below. Before this, components reached for
+     `border-white/10`, `bg-white/5` and friends directly, and the light theme had
+     to claw them back one escaped class name at a time
+     (`:root[data-theme='light'] .border-white\/10 { ... }`). That list only ever
+     covered the alphas someone remembered: `border-white/{6,15,16,20}`,
+     `bg-white/{4,7,8,12}` and `divide-white/7` were never patched, so those
+     borders and dividers stayed white-on-white in light mode. */
+  --color-rule: rgba(235, 233, 230, 0.1);
+  --color-rule-strong: rgba(235, 233, 230, 0.2);
+  --color-fill: rgba(255, 255, 255, 0.05);
+  --color-fill-strong: rgba(255, 255, 255, 0.11);
+
   --font-sans: 'Rabelo', sans-serif;
   --font-mono: 'Rabelo', sans-serif;
 
@@ -44,11 +58,18 @@
 
 :root {
   color-scheme: dark;
+  --scrollbar-thumb: #46454a;
+  --scrollbar-track: var(--color-background);
 }
 
 
 :root[data-theme='light'] {
   color-scheme: light;
+  --color-rule: rgba(43, 44, 53, 0.13);
+  --color-rule-strong: rgba(43, 44, 53, 0.24);
+  --color-fill: rgba(43, 44, 53, 0.045);
+  --color-fill-strong: rgba(43, 44, 53, 0.1);
+  --scrollbar-thumb: #c3c5cc;
   --color-background: #f1f2f4;
   --color-surface: #ffffff;
   --color-surface-raised: #e8eaed;
@@ -105,9 +126,8 @@ button, input, textarea, select {
 .appearance-control:hover { background: rgba(255,255,255,0.13); }
 
 /* Glass is a quiet highlight on neutral charcoal, not a maroon wash. */
-.border-hairline { border: 1px solid rgba(232, 229, 226, 0.12); }
+.border-hairline { border: 1px solid var(--color-rule); }
 
-:root[data-theme='light'] .border-hairline { border-color: rgba(45, 46, 57, 0.15); }
 :root[data-theme='light'] .app-page,
 :root[data-theme='light'] .login-page { background: radial-gradient(ellipse at 70% 0%, rgba(165, 112, 123, 0.12), transparent 45%), var(--color-background); }
 :root[data-theme='light'] .work-panel {
@@ -128,10 +148,7 @@ button, input, textarea, select {
 :root[data-theme='light'] .sidebar-shell a:hover { background-color: rgba(43,44,53,0.07); }
 :root[data-theme='light'] .sidebar-shell a[aria-current='page'] { background: rgba(134,73,85,0.13); border-color: rgba(134,73,85,0.26); color: var(--color-foreground); }
 :root[data-theme='light'] input:not([type='file']) { background-color: rgba(255,255,255,0.75); color: var(--color-foreground); }
-:root[data-theme='light'] .border-white\/10, :root[data-theme='light'] .border-white\/8, :root[data-theme='light'] .border-white\/12 { border-color: rgba(43,44,53,0.13); }
-:root[data-theme='light'] .bg-white\/5, :root[data-theme='light'] .bg-white\/10 { background-color: rgba(43,44,53,0.045); }
 :root[data-theme='light'] .text-white { color: var(--color-foreground); }
-:root[data-theme='light'] .markdown blockquote { border-left-color: rgba(43,44,53,0.2); }
 :root[data-theme='light'] ::selection { background: #e4c0c8; color: #202129; }
 
 .app-page, .login-page {
@@ -176,9 +193,11 @@ button, input, textarea, select {
 .action-primary:focus-visible, a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 
 ::selection { background: #754950; color: #fff; }
+/* Themed, not hardcoded: the thumb's border blends it into whatever it scrolls over,
+   so pinning both to #090a0c painted a black bar down every light-mode scroller. */
 ::-webkit-scrollbar { width: 9px; height: 9px; }
-::-webkit-scrollbar-thumb { background: #46454a; border: 2px solid #090a0c; border-radius: 5px; }
-::-webkit-scrollbar-track { background: #090a0c; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border: 2px solid var(--scrollbar-track); border-radius: 5px; }
+::-webkit-scrollbar-track { background: var(--scrollbar-track); }
 
 /* Uppercase tracked-out micro-labels ("SECURE CONNECTION ACTIVE" etc.) */
 .label-micro {
@@ -225,11 +244,11 @@ html.motion-paused .animate-status-pulse {
 .markdown li { margin: 3px 0; }
 .markdown a { color: var(--color-accent); }
 .markdown strong { color: var(--color-foreground); }
-.markdown blockquote { margin: 0 0 12px; padding: 2px 0 2px 12px; border-left: 2px solid rgba(255,255,255,0.12); color: var(--color-muted-foreground); }
-.markdown code { padding: 2px 5px; border-radius: 3px; background: rgba(255,255,255,0.06); color: var(--color-accent); font-family: var(--font-mono); font-size: 12px; }
-.markdown pre { margin: 0 0 12px; padding: 12px 14px; background: var(--color-background); border: 1px solid rgba(255,255,255,0.08); overflow-x: auto; }
+.markdown blockquote { margin: 0 0 12px; padding: 2px 0 2px 12px; border-left: 2px solid var(--color-rule-strong); color: var(--color-muted-foreground); }
+.markdown code { padding: 2px 5px; border-radius: 3px; background: var(--color-fill); color: var(--color-accent); font-family: var(--font-mono); font-size: 12px; }
+.markdown pre { margin: 0 0 12px; padding: 12px 14px; border-radius: 12px; background: var(--color-background); border: 1px solid var(--color-rule); overflow-x: auto; }
 .markdown pre code { padding: 0; background: none; color: var(--color-foreground); }
 .markdown table { width: 100%; margin: 0 0 12px; border-collapse: collapse; font-size: 13px; display: block; overflow-x: auto; }
-.markdown th, .markdown td { padding: 7px 10px; border: 1px solid rgba(255,255,255,0.08); text-align: left; }
-.markdown th { background: rgba(255,255,255,0.04); color: var(--color-foreground); font-weight: 600; }
-.markdown hr { margin: 16px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.08); }
+.markdown th, .markdown td { padding: 7px 10px; border: 1px solid var(--color-rule); text-align: left; }
+.markdown th { background: var(--color-fill); color: var(--color-foreground); font-weight: 600; }
+.markdown hr { margin: 16px 0; border: 0; border-top: 1px solid var(--color-rule); }

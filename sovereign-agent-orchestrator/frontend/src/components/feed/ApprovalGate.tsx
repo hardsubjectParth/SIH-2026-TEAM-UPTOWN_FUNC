@@ -35,7 +35,7 @@ function ApprovalGate({ job, onResolved }: { job: Job; onResolved: () => void })
 
       {user?.role === 'lower' ? <p className="mt-3 text-xs text-muted-foreground">An Operations Reviewer or Workspace Administrator must approve this action.</p> : (
         <div className="mt-3 flex justify-end gap-2">
-          <button type="button" disabled={busy} onClick={() => decide(false)} className="border border-white/12 px-3.5 py-1.5 text-xs text-muted-foreground transition hover:text-foreground disabled:opacity-50">Reject</button>
+          <button type="button" disabled={busy} onClick={() => decide(false)} className="border border-rule px-3.5 py-1.5 text-xs text-muted-foreground transition hover:text-foreground disabled:opacity-50">Reject</button>
           <button type="button" disabled={busy} onClick={() => decide(true)} className="action-primary px-3.5 py-1.5 text-xs">Approve</button>
         </div>
       )}

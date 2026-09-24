@@ -32,7 +32,7 @@ function Login() {
 
   return (
     <main className="login-page flex min-h-screen flex-col text-foreground">
-      <header className="flex items-center justify-between border-b border-white/10 px-6 py-5 sm:px-10">
+      <header className="flex items-center justify-between border-b border-rule px-6 py-5 sm:px-10">
         <div className="flex items-center gap-3"><span aria-hidden="true" className="brand-mark flex size-9 items-center justify-center border border-accent/40 bg-[#36242a] font-mono font-semibold text-accent">S/</span><div><p className="text-[13px] font-semibold tracking-[0.01em]">SOVEREIGN</p><p className="font-mono text-[9px] uppercase tracking-[0.16em] text-muted-foreground">Operations / AI</p></div></div>
         <AppearanceControls />
       </header>
@@ -41,7 +41,7 @@ function Login() {
           <p className="label-micro text-accent">A considered way to work</p>
           <h2 className="mt-6 text-[clamp(3.3rem,6vw,5.8rem)] font-medium leading-[1.03] tracking-[-0.065em]">Intelligence,<br />under your<br /><span className="text-accent">control.</span></h2>
           <p className="mt-8 max-w-sm border-l border-accent/45 pl-5 text-sm leading-7 text-muted-foreground">One workspace for your tasks, knowledge, reviews and generated work. Every action remains visible in context.</p>
-          <div className="mt-16 flex w-full items-center gap-4 border-t border-white/10 pt-5 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground"><span className="text-accent">01 / Access</span><span className="h-px flex-1 bg-white/10" /><span>02 / Workspace</span></div>
+          <div className="mt-16 flex w-full items-center gap-4 border-t border-rule pt-5 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground"><span className="text-accent">01 / Access</span><span className="h-px flex-1 bg-fill-strong" /><span>02 / Workspace</span></div>
         </div>
         <motion.section
           animate={unlocking ? { y: -8, opacity: 0 } : { y: 0, opacity: 1 }}
@@ -49,7 +49,7 @@ function Login() {
           aria-labelledby="sign-in-title"
           className="protocol-surface w-full px-6 py-8 sm:px-9 sm:py-10"
         >
-          <div className="flex items-center justify-between border-b border-white/10 pb-5"><p className="label-micro text-accent">Sign in / 01</p><span aria-hidden="true" className="font-mono text-xs text-accent/60">S / OS</span></div>
+          <div className="flex items-center justify-between border-b border-rule pb-5"><p className="label-micro text-accent">Sign in / 01</p><span aria-hidden="true" className="font-mono text-xs text-accent/60">S / OS</span></div>
           <h1 id="sign-in-title" className="mt-9 text-[32px] font-medium tracking-[-0.045em]">Welcome back<span className="text-accent">.</span></h1>
           <p className="mt-2 text-sm leading-relaxed text-muted-foreground">Use your account credentials to enter the workspace.</p>
           <form onSubmit={handleSubmit} className="mt-9 flex flex-col gap-5">
@@ -58,10 +58,10 @@ function Login() {
             {error ? <p className="border border-danger/20 bg-danger/5 px-3 py-2 text-xs text-danger" role="alert">{error}</p> : null}
             <button type="submit" disabled={submitting} className="action-primary mt-2 w-full px-4 py-3 text-sm">{submitting ? 'Signing in…' : 'Enter workspace'} <span aria-hidden="true">→</span></button>
           </form>
-          <p className="mt-9 border-t border-white/10 pt-5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Access level is assigned to your account.</p>
+          <p className="mt-9 border-t border-rule pt-5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Access level is assigned to your account.</p>
         </motion.section>
       </div>
-      <footer className="flex justify-between border-t border-white/10 px-6 py-4 font-mono text-[10px] uppercase tracking-widest text-muted-foreground sm:px-10"><span>Sovereign / Operations</span><span>Private workspace</span></footer>
+      <footer className="flex justify-between border-t border-rule px-6 py-4 font-mono text-[10px] uppercase tracking-widest text-muted-foreground sm:px-10"><span>Sovereign / Operations</span><span>Private workspace</span></footer>
     </main>
   )
 }

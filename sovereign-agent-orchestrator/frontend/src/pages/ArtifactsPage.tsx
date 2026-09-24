@@ -17,7 +17,7 @@ function ArtifactsPage() {
           <p className="label-micro mb-3 text-accent">05 / Deliverables</p><h1 className="text-3xl font-medium tracking-[-0.04em] text-foreground">Generated Artifacts<span className="text-accent">.</span></h1>
           <p className="mt-1 text-xs text-muted-foreground">Outputs from your recent tasks. Select a task to see its files.</p>
         </div>
-        <div className="flex gap-1 rounded-full border border-accent/20 bg-white/5 p-1" role="group" aria-label="Layout">
+        <div className="flex gap-1 rounded-full border border-accent/20 bg-fill p-1" role="group" aria-label="Layout">
           <button type="button" aria-pressed={layout === 'list'} onClick={() => setLayout('list')} className={`label-micro rounded-full px-3 py-1.5 ${layout === 'list' ? 'bg-accent/20 text-foreground' : 'text-muted-foreground'}`}>List</button>
           <button type="button" aria-pressed={layout === 'grid'} onClick={() => setLayout('grid')} className={`label-micro rounded-full px-3 py-1.5 ${layout === 'grid' ? 'bg-accent/20 text-foreground' : 'text-muted-foreground'}`}>Grid</button>
         </div>

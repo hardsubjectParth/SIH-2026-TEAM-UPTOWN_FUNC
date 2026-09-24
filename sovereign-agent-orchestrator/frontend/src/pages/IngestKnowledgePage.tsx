@@ -79,11 +79,12 @@ function IngestKnowledgePage() {
             const dropped = event.dataTransfer.files?.[0]
             if (dropped) selectFile(dropped)
           }}
-          className={`flex h-48 cursor-pointer flex-col items-center justify-center border border-dashed px-4 text-center transition-colors focus-within:border-accent ${dragOver ? 'border-accent bg-accent/5' : 'border-white/16'}`}
+          className={`flex h-48 cursor-pointer flex-col items-center justify-center rounded-[20px] border border-dashed px-6 text-center transition-colors focus-within:border-accent ${dragOver ? 'border-accent bg-accent/5' : 'border-rule-strong hover:border-accent/50 hover:bg-fill'}`}
         >
           <input key={inputKey} type="file" accept={SUPPORTED_UPLOAD_TYPES} className="sr-only" onChange={(event) => selectFile(event.target.files?.[0] ?? null)} />
-          <span className="text-sm text-foreground">{file ? file.name : 'Drop a file here or click to browse'}</span>
-          <span className="mt-2 text-xs text-muted-foreground">{SUPPORTED_LABEL}</span>
+          <svg aria-hidden="true" viewBox="0 0 24 24" width="26" height="26" className={dragOver ? 'text-accent' : 'text-muted-foreground'} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 16V4" /><path d="m7.5 8.5 4.5-4.5 4.5 4.5" /><path d="M3.5 15v3.5a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2V15" /></svg>
+          <span className="mt-3 text-sm text-foreground">{file ? file.name : 'Drop a file here or click to browse'}</span>
+          <span className="mt-2 max-w-sm text-xs leading-relaxed text-muted-foreground">{SUPPORTED_LABEL}</span>
         </label>
 
         <fieldset>
