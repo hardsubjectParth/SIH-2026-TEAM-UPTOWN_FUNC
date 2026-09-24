@@ -11,6 +11,7 @@ class Store:
         self.engine = create_engine(url, future=True, pool_pre_ping=True)
         self.lock = threading.Lock()
         self._create_schema()
+        self._ensure_file_created_at()
 
     @staticmethod
     def _decode(value):
@@ -54,7 +55,7 @@ class Store:
             db.execute(text('CREATE TABLE IF NOT EXISTS jobs(id VARCHAR(255) PRIMARY KEY, data TEXT NOT NULL)'))
             db.execute(text(f'CREATE TABLE IF NOT EXISTS events(id {integer}, job_id VARCHAR(255), type VARCHAR(255), data TEXT, created_at VARCHAR(255))'))
             db.execute(text(f'CREATE TABLE IF NOT EXISTS approvals(id {integer}, job_id VARCHAR(255), approved INTEGER, reviewer VARCHAR(255), created_at VARCHAR(255))'))
-            db.execute(text('CREATE TABLE IF NOT EXISTS files(id VARCHAR(255) PRIMARY KEY, owner_id VARCHAR(255) NOT NULL, tenant_id VARCHAR(255) NOT NULL, name VARCHAR(255) NOT NULL, path TEXT NOT NULL, metadata TEXT NOT NULL)'))
+            db.execute(text('CREATE TABLE IF NOT EXISTS files(id VARCHAR(255) PRIMARY KEY, owner_id VARCHAR(255) NOT NULL, tenant_id VARCHAR(255) NOT NULL, name VARCHAR(255) NOT NULL, path TEXT NOT NULL, metadata TEXT NOT NULL, created_at VARCHAR(255))'))
             db.execute(text(f'CREATE TABLE IF NOT EXISTS audit_events(id {integer}, actor_id VARCHAR(255), tenant_id VARCHAR(255), action VARCHAR(255) NOT NULL, resource VARCHAR(255), data TEXT, created_at VARCHAR(255))'))
             db.execute(text('CREATE TABLE IF NOT EXISTS job_queue(job_id VARCHAR(255) PRIMARY KEY, status VARCHAR(32) NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, created_at VARCHAR(255) NOT NULL)'))
             db.execute(text('CREATE TABLE IF NOT EXISTS conversations(id VARCHAR(255) PRIMARY KEY, tenant_id VARCHAR(255) NOT NULL, owner_id VARCHAR(255) NOT NULL, title VARCHAR(512) NOT NULL, created_at VARCHAR(255) NOT NULL, updated_at VARCHAR(255) NOT NULL, archived INTEGER NOT NULL DEFAULT 0)'))
@@ -62,6 +63,39 @@ class Store:
             db.execute(text('CREATE INDEX IF NOT EXISTS messages_conversation_idx ON messages(conversation_id, id)'))
             db.execute(text('CREATE TABLE IF NOT EXISTS file_shares(id VARCHAR(255) PRIMARY KEY, file_id VARCHAR(255) NOT NULL, tenant_id VARCHAR(255) NOT NULL, shared_with_user_id VARCHAR(255) NOT NULL, permission VARCHAR(32) NOT NULL DEFAULT \'read\', expires_at VARCHAR(255), revoked INTEGER NOT NULL DEFAULT 0, created_at VARCHAR(255) NOT NULL)'))
             db.execute(text('CREATE INDEX IF NOT EXISTS file_shares_access_idx ON file_shares(file_id, shared_with_user_id, revoked)'))
+
+    def _ensure_file_created_at(self):
+        """Add files.created_at to databases that predate it, and fill it in once.
+
+        This runs outside _create_schema on purpose: that method returns early
+        against an already-provisioned Postgres, so a CREATE TABLE change there
+        never reaches a database that already exists -- which is every database
+        this would matter to.
+
+        Existing rows have no recorded upload time, but the uploaded file is still
+        on disk, and its mtime is when it was written. That is the upload time for
+        every row that came through POST /files, so it is a real backfill rather
+        than a placeholder. Rows whose file has since been removed stay NULL, and
+        the interface says "unknown" for them, which is true.
+        """
+        from pathlib import Path as _Path
+
+        with self.engine.begin() as db:
+            if self.url.startswith('postgresql'):
+                db.execute(text("SELECT pg_advisory_xact_lock(hashtext('sovereign-agent-orchestrator-files-created-at'))"))
+                db.execute(text('ALTER TABLE files ADD COLUMN IF NOT EXISTS created_at VARCHAR(255)'))
+            else:
+                columns = {row[1] for row in db.execute(text('PRAGMA table_info(files)')).fetchall()}
+                if 'created_at' not in columns:
+                    db.execute(text('ALTER TABLE files ADD COLUMN created_at VARCHAR(255)'))
+
+            missing = db.execute(text('SELECT id, path FROM files WHERE created_at IS NULL')).fetchall()
+            for file_id, path in missing:
+                try:
+                    stamp = datetime.fromtimestamp(_Path(path).stat().st_mtime, timezone.utc).isoformat()
+                except OSError:
+                    continue  # the upload is gone; leave it unknown rather than invent one
+                db.execute(text('UPDATE files SET created_at=:created WHERE id=:id'), {'created': stamp, 'id': file_id})
 
     def save(self, job):
         job.setdefault('created_at', datetime.now(timezone.utc).isoformat())
@@ -110,7 +144,7 @@ class Store:
 
     def register_file(self, file_id, owner_id, tenant_id, name, path, metadata):
         with self.engine.begin() as db:
-            db.execute(text('INSERT INTO files(id,owner_id,tenant_id,name,path,metadata) VALUES(:id,:owner,:tenant,:name,:path,:metadata)'), {'id': file_id, 'owner': owner_id, 'tenant': tenant_id, 'name': name, 'path': path, 'metadata': json.dumps(metadata,default=str)})
+            db.execute(text('INSERT INTO files(id,owner_id,tenant_id,name,path,metadata,created_at) VALUES(:id,:owner,:tenant,:name,:path,:metadata,:created)'), {'id': file_id, 'owner': owner_id, 'tenant': tenant_id, 'name': name, 'path': path, 'metadata': json.dumps(metadata,default=str), 'created': datetime.now(timezone.utc).isoformat()})
 
     def files(self, identity, limit=100):
         with self.engine.connect() as db:
@@ -119,7 +153,9 @@ class Store:
             # whose own uploads happened to sort after 100 other people's saw a
             # truncated list -- or none at all -- with no indication anything was
             # missing.
-            rows = db.execute(text('SELECT id,owner_id,tenant_id,name,path,metadata FROM files WHERE tenant_id=:tenant AND (:is_admin = 1 OR owner_id = :owner) ORDER BY name LIMIT :limit'), {'tenant': identity['tenant_id'], 'owner': identity['user_id'], 'is_admin': 1 if identity.get('role') == 'admin' else 0, 'limit': min(max(limit, 1), 100)}).fetchall()
+            # COALESCE rather than NULLS LAST, which SQLite and Postgres disagree on:
+            # a row whose upload is gone sorts last instead of first.
+            rows = db.execute(text('SELECT id,owner_id,tenant_id,name,path,metadata,created_at FROM files WHERE tenant_id=:tenant AND (:is_admin = 1 OR owner_id = :owner) ORDER BY COALESCE(created_at, \'\') DESC, name LIMIT :limit'), {'tenant': identity['tenant_id'], 'owner': identity['user_id'], 'is_admin': 1 if identity.get('role') == 'admin' else 0, 'limit': min(max(limit, 1), 100)}).fetchall()
         return [self._row(row._mapping, metadata=self._decode(row.metadata)) for row in rows]
 
     def user_storage_bytes(self, identity):

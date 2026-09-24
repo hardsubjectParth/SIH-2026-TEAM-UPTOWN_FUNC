@@ -1461,3 +1461,63 @@ def test_dev_login_still_rejects_a_bad_password_or_unknown_account(monkeypatch):
 			dev_auth.issue_dev_token(dev_auth.DevLoginRequest(username=username, password=password))
 		assert raised.value.status_code == 401
 		assert raised.value.detail == 'INVALID_CREDENTIALS'
+
+def test_uploads_record_when_they_arrived(tmp_path):
+	from app.storage.store import Store
+	store = Store(f'sqlite:///{tmp_path / "store.db"}')
+	store.register_file('f1', 'alice', 't1', 'a.txt', str(tmp_path / 'a.txt'), {})
+	record = store.files({'user_id': 'alice', 'tenant_id': 't1', 'role': 'lower'})[0]
+	assert record['created_at'], 'the interface reads this; without it every row says "unknown"'
+	assert record['created_at'].startswith('20')
+
+def test_file_listing_is_newest_first(tmp_path):
+	import time
+	from app.storage.store import Store
+	store = Store(f'sqlite:///{tmp_path / "store.db"}')
+	for name in ('first.txt', 'second.txt', 'third.txt'):
+		store.register_file(name, 'alice', 't1', name, str(tmp_path / name), {})
+		time.sleep(0.01)
+	listed = store.files({'user_id': 'alice', 'tenant_id': 't1', 'role': 'lower'})
+	assert [r['name'] for r in listed] == ['third.txt', 'second.txt', 'first.txt']
+
+def test_a_database_without_created_at_is_migrated_and_backfilled(tmp_path):
+	# _create_schema returns early against an already-provisioned database, so a
+	# CREATE TABLE change never reaches the databases this matters to. The column
+	# is added separately, and backfilled from the upload's mtime -- which is when
+	# it was written, so it is the real upload time and not a placeholder.
+	import os
+	import time
+	from sqlalchemy import create_engine, text
+	from app.storage.store import Store
+
+	url = f'sqlite:///{tmp_path / "old.db"}'
+	upload = tmp_path / 'legacy.txt'
+	upload.write_text('uploaded before the column existed')
+	written = time.time() - 3600
+	os.utime(upload, (written, written))
+
+	engine = create_engine(url)
+	with engine.begin() as db:
+		db.execute(text('CREATE TABLE files(id VARCHAR(255) PRIMARY KEY, owner_id VARCHAR(255) NOT NULL, tenant_id VARCHAR(255) NOT NULL, name VARCHAR(255) NOT NULL, path TEXT NOT NULL, metadata TEXT NOT NULL)'))
+		db.execute(text("INSERT INTO files VALUES('old','alice','t1','legacy.txt',:path,'{}')"), {'path': str(upload)})
+
+	store = Store(url)  # constructing it runs the migration
+	record = store.files({'user_id': 'alice', 'tenant_id': 't1', 'role': 'lower'})[0]
+	assert record['name'] == 'legacy.txt'
+	assert record['created_at'], 'the existing row should have been backfilled'
+	assert record['created_at'].startswith('20')
+
+def test_a_row_whose_upload_is_gone_stays_unknown(tmp_path):
+	# Better an honest "unknown" than a made-up timestamp.
+	from sqlalchemy import create_engine, text
+	from app.storage.store import Store
+
+	url = f'sqlite:///{tmp_path / "missing.db"}'
+	engine = create_engine(url)
+	with engine.begin() as db:
+		db.execute(text('CREATE TABLE files(id VARCHAR(255) PRIMARY KEY, owner_id VARCHAR(255) NOT NULL, tenant_id VARCHAR(255) NOT NULL, name VARCHAR(255) NOT NULL, path TEXT NOT NULL, metadata TEXT NOT NULL)'))
+		db.execute(text("INSERT INTO files VALUES('gone','alice','t1','gone.txt','/nonexistent/gone.txt','{}')"))
+
+	store = Store(url)
+	record = store.files({'user_id': 'alice', 'tenant_id': 't1', 'role': 'lower'})[0]
+	assert record['created_at'] is None
