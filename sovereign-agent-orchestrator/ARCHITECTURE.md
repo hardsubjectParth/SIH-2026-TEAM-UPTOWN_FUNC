@@ -22,7 +22,14 @@ REST/SSE client — desktop, web or script — integrates the same way.
    of a question about a picture usually names nothing visual.
 4. Retrieval runs against the RAG tier databases the caller's role may read. Attached
    images are also passed to the model directly, so a drawing can be read even when
-   nothing useful was ever OCR'd from it.
+   nothing useful was ever OCR'd from it. Attaching a file also narrows retrieval to
+   that file, so an attachment answers from itself rather than competing with the
+   rest of the tier.
+   Each chunk is additionally indexed with the equipment identifiers found in it
+   (`equipment_tags`), so a document can be retrieved by name as well as by meaning.
+   That matters because similarity search is poor at identifiers: a transcribed valve
+   tag is a dozen characters sharing no vocabulary with a natural-language question,
+   and measurably never enters the top results for its own question.
 5. The planner emits structured steps. Reasoning is not exposed as the answer:
    `OllamaAdapter` strips inline `<think>` blocks, which thinking models emit into
    `content` whether or not `think: false` was requested.
@@ -31,6 +38,11 @@ REST/SSE client — desktop, web or script — integrates the same way.
 7. Approved tools execute only inside the job workspace.
 8. Results become observations.
 9. The verifier evaluates task-specific completion and blocks delivery on failure.
+   Questions go through it too: a task classified `general` used to short-circuit the
+   pipeline and stamp itself `{'passed': True, 'checks': {}}` without the verifier
+   ever running, which made `REQUIRE_EVIDENCE` unreachable from the path users spend
+   their time on. Checks that cannot apply to a question -- `plan_completed`,
+   `artifacts_exist` -- are marked not-applicable for it rather than failed.
 10. Medium/high-risk actions can pause at `awaiting_approval` and resume only through
     the approval endpoint.
 11. Artifacts are discovered inside `output/` and exposed through an API download
@@ -76,3 +88,29 @@ Alternative paths: `acting → awaiting_approval → acting`; `verifying → pla
 | Artifact | python-docx / python-pptx / openpyxl / pymupdf | Templated generators |
 | Storage | SQLite for development | PostgreSQL for production |
 | Ingest | Synchronous, so a slow vision-OCR pass blocks the upload | Queued ingest with a job to poll |
+| Formats | 50 extensions: documents, images, and source code with its indentation preserved | Archive and legacy-Office support |
+| Retrieval | Dense vectors plus a lexical blend, plus exact `equipment_tags` filtering | Cross-encoder reranking for short documents |
+
+## Known limits
+
+Measured, not assumed. Each is reproducible with `demo/run_showcase.py`.
+
+- **The OCR noise floor tests quantity, not quality.** `_ocr_is_unusable` asks how
+  much text Tesseract returned and how much of it looks like words. It cannot ask
+  whether the *right* text came back, so a large document with any prose on it
+  passes while its real content is lost -- a photographed control screen keeps a
+  single mangled caption and drops every value; a scanned P&ID keeps its notes
+  paragraph and drops every equipment tag. `OCR_PREFER_VISION=true` bypasses the
+  test for images, at the cost of routing every PDF to vision as well.
+- **Short documents rank poorly on similarity.** This is what `equipment_tags`
+  exists for; the filter buys recall, not ranking.
+- **Evidence grounding checks that retrieval returned hits**, not that the answer
+  uses them. It blocks the empty-retrieval case and little else.
+- **The egress monitor reports, it does not enforce.** `app/network.py` says so in
+  its own docstring; the deployment blocks outbound traffic.
+- **A spreadsheet request with no spreadsheet attached** falls back to the document
+  plan and emits a `.docx` named `spreadsheet_analysis.docx`
+  (`app/orchestrator/service.py`, `_spreadsheet_plan`). With a sheet attached the
+  plan runs `spreadsheet_profile → extract_tables → generate_xlsx` correctly.
+- **The SSE event stream is unbounded.** It stays open until the job is terminal,
+  so a stuck job holds the connection indefinitely.

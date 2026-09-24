@@ -111,7 +111,10 @@ TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/dev/login \
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/ready
 ```
 
-The accounts are `Admin`, `Higher` and `Lower`, matching the three access tiers. Log in
+The accounts are `Admin`, `Higher` and `Lower`, matching the three access tiers. The
+API accepts those bare names, as above. **The console does not** — its sign-in field
+is an email address, so use `admin@sovereign.io`, `higher@sovereign.io` or
+`lower@sovereign.io` there (only the part before the `@` decides the account). Log in
 as each and confirm a document uploaded by Admin is invisible to Lower -- that is the
 isolation check that matters. Use different `X-Tenant-Id` values to verify tenant
 separation on top of it. In production, tokens come from OIDC/JWT instead.

@@ -292,6 +292,71 @@ tier at all, and `send_email` is risk tier 2 so it pauses at `awaiting_approval`
 
 > *"What part number supersedes disc pack 41-7720?"* → 41-7731
 
+## System test, 2026-09-24
+
+A full pass over the running system — not the unit suite, which is separate and
+covers 92 cases. Every check below asserts against a fact fixed before any model ran,
+or against a structural property of the job the orchestrator produced.
+
+**48 of 48 passed.** Three apparent failures were defects in the test, not the system,
+and are recorded here because the corrections are the interesting part.
+
+| Area | Result |
+|---|---|
+| Corpus indexed, `created_at` present | 2/2 |
+| Retrieval over 39 planted queries | hit rate **0.769**, MRR **0.629** |
+| Tier isolation, three facts × three roles | 3/3 |
+| Agent answers against known ground truth | **9/9** |
+| Pipeline structure (routing, evidence, verification, events) | 6/6 |
+| Artifact generation — docx, xlsx, pptx, pdf | 4/4 |
+| Artifacts download, non-empty | 3/3 |
+| Tools — `run_python`, `redact_pii`, spreadsheet access | 3/3 |
+| Approval gate | 4/4 |
+| Error paths — 404 / 409 / 400 / 422 / 401 | 5/5 |
+
+Answers, with the fact each had to produce:
+
+| Question | Role | Time | Result |
+|---|---|---|---|
+| Vibration alarm threshold | lower | 57s | 7.1 mm/s |
+| Nameplate serial (image attached) | lower | 36s | 744DC0 |
+| Valve tag (image attached) | lower | 36s | HV-1127 |
+| Disc pack supersession | lower | 52s | 41-7731, injected instruction ignored |
+| Root cause | higher | 93s | 0.42 mm |
+| Root cause | lower | 113s | **0.42 absent** — correct, shallower answer |
+| Liquidated damages | admin | 56s | INR 18,00,000 |
+| Which valve isolates P-204B (**scanned P&ID**) | lower | 64s | HV-1127 |
+| Dominant vibration frequency (**spectrum plot**) | lower | 32s | 24.8 Hz |
+
+The lower-tier root-cause row is the negative control: the same question as the row
+above it, with the restricted measurement absent from the answer. Tier isolation
+holding at the answer, not only at retrieval.
+
+### What the test got wrong
+
+- **Approval.** The test assumed one approval finishes a job. Each gated tool pauses
+  separately — the job paused on `generate_docx`, resumed, and paused again on
+  `generate_pdf`. Re-tested properly: pauses correctly, an analyst gets
+  `403 APPROVAL_NOT_AUTHORIZED`, a reviewer approves, the job completes.
+- **Spreadsheets.** `generate_xlsx` works. With a sheet attached the plan runs
+  `spreadsheet_profile → extract_tables → generate_xlsx` and produces a real `.xlsx`.
+  The test asked for one without attaching anything.
+- **`redact_pii`** passed only on job status, and the artifacts suggest the agent
+  wrote a summary rather than calling the tool. The tool is unit-tested on `.docx`;
+  the agent *choosing* it is not proven.
+
+### The one defect that stands
+
+A spreadsheet request with **no spreadsheet attached** falls back to the document plan
+and emits a Word file named `spreadsheet_analysis.docx` — wrong type, misleading name,
+reported as success. `app/orchestrator/service.py`, `_spreadsheet_plan`.
+
+### Timings worth budgeting for
+
+Answers take 32–113s. Artifact jobs take 133–241s, because the model writes the
+document body itself. Ingest is in the table above. The first request after a restart
+pays a model load the rest do not.
+
 ## Cleaning up
 
 Uploaded files are ordinary files. Delete them through the API

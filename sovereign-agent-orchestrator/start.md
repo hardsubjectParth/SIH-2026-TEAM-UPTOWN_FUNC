@@ -197,13 +197,46 @@ Vite serves on `http://localhost:5173` by default.
 
 ## 4. Open and log in
 
-Go to **http://localhost:5173**. On the login screen:
+Go to **http://localhost:5173**. The console signs in with an **email address**,
+not a role name — the field is `type="email"`, so a browser will not submit a bare
+`admin`.
 
-- **Test account**: `Admin` (or `Higher`/`Lower`)
-- **Password**: whatever you set as `DEV_ADMIN_PASSWORD` (etc.) in `.env`
+| Email | Role | Password (`.env`) |
+|---|---|---|
+| `admin@sovereign.io` | Workspace Administrator | `DEV_ADMIN_PASSWORD` — currently `test-pass-123` |
+| `higher@sovereign.io` | Operations Reviewer | `DEV_HIGHER_PASSWORD` |
+| `lower@sovereign.io` | Operations Analyst | `DEV_LOWER_PASSWORD` |
+
+Only the part before the `@` decides the account, so any domain works —
+`admin@anything.com` signs in as the administrator. The domain carries no
+authority and the password is still checked. Scripts and the CLI can still pass
+a bare `admin` / `higher` / `lower`.
+
+> ⚠️ `DEV_ADMIN_PASSWORD` is written above for the team's convenience. It grants
+> administrator access to every tier whenever `DEV_AUTH_ENABLED=true`. Set
+> `DEV_AUTH_ENABLED=false` in anything resembling a real deployment, and change
+> these passwords before this repository is shared beyond the team.
 
 This dev-login screen only works while `DEV_AUTH_ENABLED=true` — it's not
 present/usable in a production deployment.
+
+### If the login silently does nothing
+
+Three causes, all seen in practice:
+
+1. **CORS.** `CORS_ALLOW_ORIGINS` in `.env` lists the frontend's origin. If you
+   start Vite on any port other than 5173 — because 5173 is already taken — the
+   browser blocks the login call before it reaches the API and the form just sits
+   there. Add the port you are using, e.g.
+   `http://localhost:5174,http://127.0.0.1:5174`.
+2. **Preview data.** If `VITE_PREVIEW_DATA=true` is set for the frontend, the
+   console answers from built-in fixtures and never calls the backend: sign-in
+   accepts any password, and you see three invented jobs and two invented
+   documents. Leave it unset for a real run.
+3. **Expired session.** Dev tokens last `DEV_AUTH_TTL_SECONDS` (default 900, max
+   3600). When one expires the Knowledge Base renders "No documents ingested yet"
+   rather than sending you back to the login screen — it looks like lost data, not
+   a timeout. Set `DEV_AUTH_TTL_SECONDS=3600` and sign in fresh before a demo.
 
 ### Watching a run
 
@@ -246,17 +279,26 @@ Two things to expect on a first run:
 
 ## Stopping everything
 
+Stop by port, not by process name:
+
 ```bash
-pkill -f "uvicorn app.main:app"
-pkill -f "node .*/vite"
-pkill -f "ollama serve"
+kill $(lsof -nP -iTCP:8080 -sTCP:LISTEN -t)    # backend API
+kill $(lsof -nP -iTCP:5173 -sTCP:LISTEN -t)    # frontend
+pkill -f "ollama serve"                         # model server
 ```
 
 Stopping `ollama serve` also unloads the model and returns its ~17.8 GB.
 
-(`pkill -f "vite --host"` only matches if you started it with an explicit
-`--host` flag — plain `npm run dev` won't have that in its command line, so
-match on the vite binary path instead.)
+> ⚠️ Do not use `pkill -f "uvicorn app.main:app"` or `pkill -f "node .*/vite"`.
+> Those patterns are not specific to this project: on a machine with another
+> FastAPI or Vite project open they will kill that one instead, which has
+> happened. Killing by listening port only ever hits the service you meant.
+
+To check what a port actually belongs to before killing it:
+
+```bash
+lsof -a -p <pid> -d cwd -Fn      # prints the process's working directory
+```
 
 Or just `Ctrl+C` each foreground terminal if you didn't background them.
 

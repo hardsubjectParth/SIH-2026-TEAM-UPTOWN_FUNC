@@ -34,6 +34,18 @@ with a task-type-specific plan, re-planning on verification failure within
 Job states: `queued`, `planning`, `acting`, `observing`, `verifying`,
 `awaiting_approval`, `delivering`, `done`, `failed`, `cancelled`.
 
+Ingest accepts **50 file extensions**: documents, spreadsheets, images, and source
+code. Code and config files are chunked on line boundaries so indentation survives —
+the prose chunker collapses all whitespace, which for Python discards the structure
+that carries the meaning.
+
+Every chunk is also indexed with the equipment identifiers it contains
+(`equipment_tags`, e.g. `P-204B`, `HV-1127`, `SOP-BFP-07`), so a document can be
+found by name as well as by meaning. Filter with
+`{"metadata": {"equipment_tags": ["HV-1127"]}}` on `POST /knowledge/search`. Tags are
+written at ingest time, so documents indexed before this existed carry none until
+they are re-ingested.
+
 For RAG, the flow is:
 
 ```text
@@ -176,6 +188,16 @@ The exit code gates verification for coding tasks.
 `send_email` and `create_calendar_event` require an approval policy. `create_calendar_event`
 only ever writes an auditable draft JSON file into the job workspace. `send_email`
 does the same unless `SMTP_HOST` is configured, in which case it sends for real.
+
+`redact_pii` handles `.docx` through python-docx rather than as raw bytes, and
+replaces per paragraph rather than per run — Word splits a paragraph at every
+formatting change, which routinely cuts an email address in half so that no single
+run matches. Reading a `.docx` as text instead produced a corrupt archive that still
+contained every address it started with.
+
+`generate_xlsx` is reached by the `spreadsheet` plan, which needs a spreadsheet
+**attached**. A spreadsheet request with nothing attached currently falls back to the
+document plan and produces a `.docx` — see Known limits in `ARCHITECTURE.md`.
 
 There is deliberately no arbitrary-URL fetch tool.
 
@@ -547,16 +569,35 @@ curl -L http://127.0.0.1:8080/api/v1/agent/JOB_ID/artifacts/approval_note.docx \
 
 Policy-controlled actions pause at `awaiting_approval`.
 
+**Only a reviewer or an administrator may approve.** A `lower` role gets
+`403 APPROVAL_NOT_AUTHORIZED`, and the role is checked before the job is looked up,
+so the response cannot be used to discover which job ids exist. A reviewer may not
+clear their own job (`403 SELF_APPROVAL_NOT_ALLOWED`); an administrator may, because
+there is nobody above them to ask.
+
+`reviewer_user_id` in the body is accepted for compatibility and **ignored** — the
+reviewer recorded is always the one holding the token.
+
+So that there is something to review, a `higher` role can also see another user's job
+while it is `awaiting_approval`, in the same tenant, and only in that status.
+
 ```bash
 # Approve (or send "approved":false to reject)
 curl -X POST http://127.0.0.1:8080/api/v1/agent/JOB_ID/approve \
   -H "content-type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"approved":true,"reviewer_user_id":"reviewer-1"}'
+  -d '{"approved":true}'
 
 curl -X POST http://127.0.0.1:8080/api/v1/agent/JOB_ID/cancel \
   -H "Authorization: Bearer $TOKEN"
 ```
+
+**Each gated tool pauses separately.** A job that generates both a `.docx` and a
+`.pdf` pauses twice, and one approval resumes it only as far as the next gated call.
+Poll the status after approving rather than assuming the job has finished.
+
+Cancelling a job that is already `done`, `failed` or `cancelled` returns
+`409 JOB_ALREADY_FINISHED` rather than overwriting its status.
 
 ## 16. API integration pattern
 
