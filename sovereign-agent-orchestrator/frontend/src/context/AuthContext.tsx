@@ -13,7 +13,11 @@ type AuthContextType = {
 type Session = { token: string; user: User; expiresAt: number }
 
 const SESSION_KEY = 'sovereign-dev-session'
-const PREVIEW_MODE = import.meta.env.DEV
+// Opt-in, matching services/api.ts. As `import.meta.env.DEV` this bypassed
+// authentication entirely whenever the console ran under `npm run dev`: login
+// fabricated a session from the email's local part without ever checking the
+// password, and anything unrecognised silently became an administrator.
+const PREVIEW_MODE = import.meta.env.VITE_PREVIEW_DATA === 'true'
 const PREVIEW_ROLES = new Set<User['role']>(['admin', 'higher', 'lower'])
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 

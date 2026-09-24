@@ -16,7 +16,14 @@ export type { AuthUser, LoginResponse, FileRecord, Job, JobSummary, JobEvent, Co
 export type User = AuthUser
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8080/api/v1'
-const PREVIEW_MODE = import.meta.env.DEV
+// Opt-in, not on-by-default in dev. This was `import.meta.env.DEV`, which meant
+// `npm run dev` -- the way the console is demonstrated -- answered /agent, /files,
+// /files/scopes, /conversations and /knowledge/search from the fixtures below and
+// never called the backend. Login, upload and job submission were not intercepted,
+// so the result was a hybrid: sign in for real, upload for real, then read
+// invented jobs and documents. Set VITE_PREVIEW_DATA=true to design against the
+// fixtures without a backend running.
+const PREVIEW_MODE = import.meta.env.VITE_PREVIEW_DATA === 'true'
 
 const previewJob: Job = {
   job_id: 'preview-job-001', task: 'Synthesize the latest operating signals', status: 'done',
