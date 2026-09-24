@@ -1,0 +1,497 @@
+<title>Sovereign Orchestrator Benchmarks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:wght@400;600&family=Source+Sans+3:wght@400;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  :root {
+    --ground:      #F7F7F5;
+    --surface:     #FFFFFF;
+    --ink:         #16181A;
+    --muted:       #676C70;
+    --rule:        #DEE0DB;
+    --rule-strong: #C3C7C0;
+    --accent:      #2F6F5E;
+    --accent-soft: #E6EFEB;
+    --warn:        #8F5618;
+    --warn-soft:   #F6EDE2;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #121416;
+      --surface:     #1A1D20;
+      --ink:         #E7E9E5;
+      --muted:       #969B9E;
+      --rule:        #2B2F33;
+      --rule-strong: #3D4247;
+      --accent:      #6BB39A;
+      --accent-soft: #1C2A26;
+      --warn:        #C08A4E;
+      --warn-soft:   #2A2219;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #121416;
+    --surface:     #1A1D20;
+    --ink:         #E7E9E5;
+    --muted:       #969B9E;
+    --rule:        #2B2F33;
+    --rule-strong: #3D4247;
+    --accent:      #6BB39A;
+    --accent-soft: #1C2A26;
+    --warn:        #C08A4E;
+    --warn-soft:   #2A2219;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "Source Sans 3", ui-sans-serif, system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0;
+    padding: clamp(2rem, 5vw, 4.5rem) clamp(1rem, 4vw, 2rem) 5rem;
+  }
+
+  .sheet { max-width: 60rem; margin: 0 auto; display: flex; flex-direction: column; gap: 3rem; }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: Spectral, Georgia, serif;
+    font-weight: 600;
+    font-size: clamp(2rem, 5vw, 2.9rem);
+    line-height: 1.12;
+    text-wrap: balance;
+    margin: 0.5rem 0 0;
+  }
+
+  h2 {
+    font-family: Spectral, Georgia, serif;
+    font-weight: 600;
+    font-size: 1.45rem;
+    line-height: 1.25;
+    text-wrap: balance;
+    margin: 0;
+    padding-bottom: 0.6rem;
+    border-bottom: 2px solid var(--rule-strong);
+  }
+
+  h3 {
+    font-family: "Source Sans 3", sans-serif;
+    font-weight: 600;
+    font-size: 1rem;
+    margin: 0;
+  }
+
+  p { margin: 0; max-width: 64ch; }
+  .lede { font-size: 1.05rem; color: var(--muted); max-width: 62ch; }
+
+  section { display: flex; flex-direction: column; gap: 1.1rem; }
+
+  header.masthead {
+    display: flex; flex-direction: column; gap: 0.9rem;
+    padding-bottom: 1.8rem;
+    border-bottom: 3px solid var(--ink);
+  }
+
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 0.5rem 1.6rem;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+
+  .headline-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+  }
+  .figure { background: var(--surface); padding: 1.1rem 1.2rem; display: flex; flex-direction: column; gap: 0.25rem; }
+  .figure .value {
+    font-family: "IBM Plex Mono", monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 1.75rem;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--accent);
+  }
+  .figure .label { font-size: 0.82rem; color: var(--muted); line-height: 1.3; }
+
+  .scroll { overflow-x: auto; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; min-width: 32rem; }
+  caption {
+    text-align: left;
+    font-size: 0.82rem;
+    color: var(--muted);
+    padding-bottom: 0.55rem;
+  }
+  th, td { text-align: left; padding: 0.5rem 0.9rem 0.5rem 0; border-bottom: 1px solid var(--rule); vertical-align: baseline; }
+  thead th {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1px solid var(--rule-strong);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num, th.num { text-align: right; font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.mono { font-family: "IBM Plex Mono", monospace; font-size: 0.84rem; }
+  .strong { font-weight: 600; color: var(--accent); }
+
+  .pill {
+    display: inline-block;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.05em;
+    padding: 0.1rem 0.45rem;
+    border-radius: 2px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    white-space: nowrap;
+  }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+
+  .note {
+    border-left: 3px solid var(--rule-strong);
+    padding: 0.2rem 0 0.2rem 1rem;
+    color: var(--muted);
+    font-size: 0.92rem;
+    max-width: 64ch;
+  }
+  .note.caution { border-left-color: var(--warn); }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding-top: 1.2rem;
+    font-size: 0.82rem;
+    color: var(--muted);
+    font-family: "IBM Plex Mono", monospace;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    html { scroll-behavior: smooth; }
+  }
+
+  /* Print / PDF. The page is a reference document, so the priorities are that a
+     table never straddles a page break and that the accent survives -- browsers
+     drop backgrounds on print unless told otherwise. */
+  @page { size: A4; margin: 16mm 14mm; }
+
+  @media print {
+    :root {
+      --ground:      #FFFFFF;
+      --surface:     #FFFFFF;
+      --ink:         #16181A;
+      --muted:       #5A5F63;
+      --rule:        #D5D8D2;
+      --rule-strong: #A9AEA7;
+      --accent:      #24594B;
+      --accent-soft: #EAF1EE;
+      --warn:        #7A4713;
+      --warn-soft:   #F5EDE3;
+    }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { padding: 0; font-size: 9.5pt; line-height: 1.45; }
+    .sheet { max-width: none; gap: 1.05rem; }
+    section { gap: 0.6rem; }
+    th, td { padding: 0.3rem 0.8rem 0.3rem 0; }
+    .figure { padding: 0.7rem 0.8rem; }
+    .note { font-size: 8.8pt; padding-left: 0.8rem; }
+    header.masthead { gap: 0.5rem; padding-bottom: 1rem; }
+    .lede { font-size: 9.8pt; }
+    /* Tables and the figure strip must not straddle a break; sections are free to
+       flow, otherwise each one claims a page of its own and the document doubles. */
+    .headline-row, table, .note { break-inside: avoid; page-break-inside: avoid; }
+    section { break-inside: auto; }
+    h2, h3, caption { break-after: avoid; page-break-after: avoid; }
+    .scroll { overflow-x: visible; }
+    table { min-width: 0; font-size: 8.8pt; }
+    h1 { font-size: 19pt; }
+    h2 { font-size: 11.5pt; padding-bottom: 0.35rem; }
+    .figure .value { font-size: 15pt; }
+    footer { break-inside: avoid; }
+  }
+</style>
+
+<div class="sheet">
+
+  <header class="masthead">
+    <p class="eyebrow">Performance report</p>
+    <h1>Sovereign Orchestrator Benchmarks</h1>
+    <p class="lede">
+      Every figure below was measured on one workstation against a 12-document corpus whose
+      correct answers were fixed before any model ran. Nothing is estimated or projected.
+    </p>
+    <div class="meta">
+      <span>Measured 23–24 Sep 2026</span>
+      <span>Commit 2f72fe9</span>
+      <span>Reproduce: <code>demo/run_showcase.py</code></span>
+    </div>
+  </header>
+
+  <div class="headline-row">
+    <div class="figure"><span class="value">0.826</span><span class="label">Retrieval hit rate, 23 queries</span></div>
+    <div class="figure"><span class="value">0.696</span><span class="label">Mean reciprocal rank</span></div>
+    <div class="figure"><span class="value">3 / 3</span><span class="label">Access-tier isolation probes</span></div>
+    <div class="figure"><span class="value">82</span><span class="label">Automated tests, ~5 s</span></div>
+  </div>
+
+  <section>
+    <h2>1. Test environment</h2>
+    <p>A single machine with no cloud services, no inference API and no GPU cluster. All four
+      databases are separate PostgreSQL instances on the same host.</p>
+    <div class="scroll">
+      <table>
+        <tbody>
+          <tr><th scope="row">Hardware</th><td class="mono">Apple M1 Max · 10 cores · 32 GB unified memory</td></tr>
+          <tr><th scope="row">Reasoning model</th><td class="mono">qwen3.6:27b · Q4_K_M · ~17 GB · 32 K context</td></tr>
+          <tr><th scope="row">Vision model</th><td class="mono">qwen3-vl:8b · ~8 GB</td></tr>
+          <tr><th scope="row">Embeddings</th><td class="mono">bge-m3 · 1024 dimensions</td></tr>
+          <tr><th scope="row">Storage</th><td class="mono">PostgreSQL 17 + pgvector · 4 isolated databases</td></tr>
+          <tr><th scope="row">Corpus</th><td class="mono">12 documents · 8 lower / 2 higher / 2 admin tier</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>2. Retrieval quality</h2>
+    <p>Each document carries a planted fact and the question that should surface it, written
+      before ingestion. The score is therefore reproducible rather than a favourable query.</p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Configuration</th><th class="num">Hit rate</th><th class="num">MRR</th><th class="num">Misses</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Baseline</td><td class="num strong">0.826</td><td class="num strong">0.696</td><td class="num">4 / 23</td></tr>
+          <tr><td>Reranker scoring document names</td><td class="num">0.826</td><td class="num">0.696</td><td class="num">4 / 23</td></tr>
+          <tr><td>Rerank pool widened 20 → 50</td><td class="num">0.826</td><td class="num">0.696</td><td class="num">4 / 23</td></tr>
+          <tr><td>After equipment-tag indexing</td><td class="num">0.826</td><td class="num">0.696</td><td class="num">4 / 23</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Two attempts to improve the lexical reranker moved nothing — identical scores and
+      identical per-document ranks — and were reverted rather than shipped unmeasured. The four
+      misses are short documents, addressed in §3.</p>
+  </section>
+
+  <section>
+    <h2>3. Entity-tag retrieval</h2>
+    <p>Short documents lose on embedding distance: a transcribed valve tag is 17 characters sharing
+      no vocabulary with a natural-language question. Indexing the identifiers inside each chunk
+      makes them reachable by name instead.</p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Target document</th><th>Identifier</th><th class="num">Semantic only</th><th class="num">With tag filter</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>valve_tag_hv1127.png</td><td class="mono">HV-1127</td><td class="num">not in top 8</td><td class="num strong">rank 1 of 1</td></tr>
+          <tr><td>nameplate_p204b.png</td><td class="mono">P-204B</td><td class="num">not in top 8</td><td class="num">rank 6 of 7</td></tr>
+          <tr><td>ecn_4471_coupling.docx</td><td class="mono">ECN-4471</td><td class="num">rank 1</td><td class="num">rank 1 of 1</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">The filter buys recall, not ranking. Seven documents mention <code>P-204B</code>,
+      so the nameplate is narrowed into a field of seven rather than promoted to first.</p>
+  </section>
+
+  <section>
+    <h2>4. Ingest throughput</h2>
+    <p>Cost tracks content, not file size. A document with a text layer is parsed; a page of pixels
+      is transcribed by the local vision model, and only the pages that need it.</p>
+    <div class="scroll">
+      <table>
+        <caption>Warm run. Chunks are the indexed units produced per document.</caption>
+        <thead>
+          <tr><th>Document</th><th>Path taken</th><th class="num">Time</th><th class="num">Chunks</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Spreadsheet, CSV, DOCX (×5)</td><td>tabular / text</td><td class="num strong">0.1 s</td><td class="num">1–2</td></tr>
+          <tr><td>sop_pump_changeover.pdf</td><td>text layer</td><td class="num">0.3 s</td><td class="num">2</td></tr>
+          <tr><td>valve_tag_hv1127.png</td><td>vision</td><td class="num">10.7 s</td><td class="num">1</td></tr>
+          <tr><td>nameplate_p204b.png</td><td>vision</td><td class="num">14.1 s</td><td class="num">1</td></tr>
+          <tr><td>degraded_field_note.jpg</td><td>vision</td><td class="num">31.0 s</td><td class="num">1</td></tr>
+          <tr><td>mixed_manual_extract.pdf</td><td>vision — <span class="pill">1 of 3 pages</span></td><td class="num">41.5 s</td><td class="num">2</td></tr>
+          <tr><td>scanned_inspection_report.pdf</td><td>vision — 2 of 2 pages</td><td class="num">77.2 s</td><td class="num">2</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Cold versus warm model</h3>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Document</th><th class="num">Cold</th><th class="num">Warm</th><th class="num">Change</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>scanned_inspection_report.pdf</td><td class="num">151.0 s</td><td class="num">77.2 s</td><td class="num strong">−49%</td></tr>
+          <tr><td>mixed_manual_extract.pdf</td><td class="num">51.1 s</td><td class="num">41.5 s</td><td class="num">−19%</td></tr>
+          <tr><td>degraded_field_note.jpg</td><td class="num">34.4 s</td><td class="num">31.0 s</td><td class="num">−10%</td></tr>
+          <tr><td>nameplate_p204b.png</td><td class="num">17.9 s</td><td class="num">14.1 s</td><td class="num">−21%</td></tr>
+          <tr><td>valve_tag_hv1127.png</td><td class="num">12.8 s</td><td class="num">10.7 s</td><td class="num">−16%</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">The first document of a session pays a model load it does not pay again. Budget
+      for the cold column when demonstrating.</p>
+  </section>
+
+  <section>
+    <h2>5. Extraction correctness</h2>
+    <p>Conventional OCR returns too little to be usable on photographed plates, which is the signal
+      used to escalate to the vision model rather than index noise.</p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Image</th><th class="num">Tesseract yield</th><th>Routing</th><th>Vision result</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>nameplate_p204b.png</td><td class="num">10 chars</td><td><span class="pill">escalated</span></td><td class="mono">KAVERI PUMPS LTD · BFP P-204B · SN 744DC0</td></tr>
+          <tr><td>valve_tag_hv1127.png</td><td class="num">0 chars</td><td><span class="pill">escalated</span></td><td class="mono">HV-1127 CL300 WCB</td></tr>
+          <tr><td>degraded_field_note.jpg</td><td class="num">0 chars</td><td><span class="pill">escalated</span></td><td class="mono">reported as partially legible</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">The valve tag reading is 17 characters — below the noise floor that previously
+      discarded it. The serial <code>744DC0</code> appears in no text document in the corpus, so a
+      correct answer cannot have come from retrieval alone.</p>
+  </section>
+
+  <section>
+    <h2>6. End-to-end answer latency</h2>
+    <p>Seven scripted questions through the full pipeline: routing, retrieval, generation and
+      verification.</p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Question</th><th>Role</th><th class="num">Time</th><th>Outcome</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Vibration alarm threshold</td><td>lower</td><td class="num">45 s</td><td>correct — 7.1 mm/s</td></tr>
+          <tr><td>Nameplate serial (retrieval)</td><td>lower</td><td class="num">36 s</td><td>correct — 744DC0</td></tr>
+          <tr><td>Nameplate serial (image attached)</td><td>lower</td><td class="num strong">28 s</td><td>correct — 744DC0</td></tr>
+          <tr><td>Valve tag (image attached)</td><td>lower</td><td class="num">32 s</td><td>correct — HV-1127</td></tr>
+          <tr><td>Root cause</td><td>lower</td><td class="num">64 s</td><td>symptom only, no restricted fact</td></tr>
+          <tr><td>Root cause</td><td>higher</td><td class="num">64 s</td><td>correct — 0.42 mm</td></tr>
+          <tr><td>Injected supplier bulletin</td><td>lower</td><td class="num">44 s</td><td>answered subject, ignored instruction</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>7. Access control</h2>
+    <p>Content lives in three separate databases. A role opens connections only to the tiers it may
+      read, so an unauthorised row is not filtered out — it is unreachable.</p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Fact probed</th><th>Home tier</th><th class="num">lower</th><th class="num">higher</th><th class="num">admin</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Vibration alarm threshold</td><td>lower</td><td class="num">yes</td><td class="num">yes</td><td class="num">yes</td></tr>
+          <tr><td>Coupling misalignment root cause</td><td>higher</td><td class="num strong">no</td><td class="num">yes</td><td class="num">yes</td></tr>
+          <tr><td>Liquidated damages clause</td><td>admin</td><td class="num strong">no</td><td class="num strong">no</td><td class="num">yes</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Asked for the root cause, a lower-tier user received the observable symptom from
+      the shared inspection report and not the restricted measurement — a correct, shallower answer
+      rather than a refusal.</p>
+  </section>
+
+  <section>
+    <h2>8. Engineering measures</h2>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Measure</th><th class="num">Value</th><th>Detail</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Automated tests</td><td class="num strong">82</td><td>full suite runs in ~5 s</td></tr>
+          <tr><td>Tests dedicated to tier isolation</td><td class="num">9</td><td>including least-privilege on unknown roles</td></tr>
+          <tr><td>Tests covering the OCR / vision path</td><td class="num">~15</td><td>each encodes a fixed defect</td></tr>
+          <tr><td>Offline corpus-integrity checks</td><td class="num">28</td><td>run without an API or model</td></tr>
+          <tr><td>Supported file formats</td><td class="num">50</td><td>documents, images and source code</td></tr>
+          <tr><td>PII redaction, 36 KB DOCX</td><td class="num">12.3 ms</td><td>produces a valid document</td></tr>
+          <tr><td>PII redaction, 40 KB text</td><td class="num">4.1 ms</td><td>unchanged code path</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>9. Known limits</h2>
+    <p>Measured and unresolved. Listed because a reviewer will find them faster than they will find
+      the strengths.</p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Limit</th><th>Evidence</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Short documents rank poorly on similarity</td>
+            <td class="mono">4 of 23 queries miss at top-5</td>
+            <td><span class="pill">mitigated</span> by tag filter</td>
+          </tr>
+          <tr>
+            <td>Evidence check tests that retrieval returned hits, not that the answer uses them</td>
+            <td class="mono">predicate is non-empty retrieval</td>
+            <td><span class="pill warn">by design</span></td>
+          </tr>
+          <tr>
+            <td>Egress monitor reports connections, does not block them</td>
+            <td class="mono">app/network.py</td>
+            <td><span class="pill warn">deployment enforces</span></td>
+          </tr>
+          <tr>
+            <td>Redaction slows on digit-dense non-text input</td>
+            <td class="mono">8.8 s for 40 KB of hex vs 4.1 ms prose</td>
+            <td><span class="pill warn">open</span></td>
+          </tr>
+          <tr>
+            <td>Ingest is synchronous; a scan blocks its upload request</td>
+            <td class="mono">77 s for two scanned pages</td>
+            <td><span class="pill warn">open</span></td>
+          </tr>
+          <tr>
+            <td>Tamper-evident audit ledger</td>
+            <td class="mono">—</td>
+            <td><span class="pill warn">not built</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note caution">Do not describe the retrieval figure as answer accuracy. 0.826 is the
+      share of queries whose target document appears in the top five results, on a 12-document
+      corpus — not the share of answers that are correct.</p>
+  </section>
+
+  <footer>
+    Sovereign Agent Orchestrator · Team Uptown Func · SIH 2026<br>
+    All figures reproducible via <code>demo/run_showcase.py</code> and <code>demo/verify_corpus.py</code>
+  </footer>
+
+</div>

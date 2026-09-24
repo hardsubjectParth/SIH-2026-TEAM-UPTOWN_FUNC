@@ -39,9 +39,10 @@ and most Linux distributions; otherwise pass `--font /path/to/Arial.ttf`.
 > PDF to the vision model. That destroys the selective-page demonstration in
 > `mixed_manual_extract.pdf` and makes the whole corpus slow to ingest.
 
-## The twelve documents
+## The fifteen documents
 
-Eight in the `lower` tier, two in `higher`, two in `admin`.
+Eleven in the `lower` tier, two in `higher`, two in `admin`. Text documents run to
+two or more pages; the scanned report is three and the vendor manual four.
 
 | Document | Tier | Extraction path | What it demonstrates |
 |---|---|---|---|
@@ -53,6 +54,9 @@ Eight in the `lower` tier, two in `higher`, two in `admin`.
 | `mixed_manual_extract.pdf` | lower | vision (page 3 only) | Text layer and scan in one file — the bounded pass is *selective* |
 | `supplier_bulletin_2026_09.pdf` | lower | text layer | Contains an instruction aimed at the model. It must be ignored |
 | `degraded_field_note.jpg` | lower | vision | Genuinely unreadable. The answer must say so rather than invent values |
+| `pid_unit3_feedwater.png` | lower | tesseract (partial) | A scanned P&ID. Tags at coordinates, no sentences — see the noise-floor note below |
+| `vibration_spectrum_p204b.png` | lower | vision | An instrument plot. Its 1x peak is the same 7.9 mm/s the spreadsheet holds |
+| `hmi_unit3_feedwater.png` | lower | tesseract (partial) | A photographed control screen. Values in tiles, alarm state in colour |
 | `vibration_survey_q3.xlsx` | higher | tabular | 7.9 mm/s against the alarm threshold stated in the lower-tier SOP |
 | `ecn_4471_coupling.docx` | higher | text | The root cause. A `lower` role structurally cannot reach it |
 | `vendor_addendum_a3.docx` | admin | text | The penalty clause, plus dense PII for `redact_pii` |
@@ -198,6 +202,31 @@ the dense retriever already ranked; it cannot rescue a document whose deficit is
 *in* the dense score. Do not spend further effort tuning the blend weight against
 these 23 cases — that is overfitting a corpus this small. Raise `top_k`, attach
 the image, or bring in a cross-encoder.
+
+### A third instance: the noise floor tests quantity, not quality
+
+Adding the drawing and the control screen surfaced the same flaw a third time, and
+more sharply than before.
+
+`_ocr_is_unusable` asks how much text Tesseract returned and how much of it looks
+like words. It cannot ask whether the *right* text came back. So:
+
+| Document | Tesseract returns | Floor | What is lost |
+|---|---|---|---|
+| `hmi_unit3_feedwater.png` | 42 chars: `PBSING OVER FOUR SHEFTS - SURVEY REQUE` | **passes** | every tile value — pressure, flow, temperature, vibration |
+| `pid_unit3_feedwater.png` | ~290 chars, mostly the drawing notes | **passes** | every equipment tag: `P-204A/B/C`, `HV-1126/1127/1128`, `HX-3B`, `TK-07`, the title block |
+
+The screen's surviving caption is visibly mangled — `PBSING`, `SHEFTS` — and still
+clears the floor, because 42 characters across six word-shaped tokens is all the
+test requires. The drawing passes on a paragraph of ordinary prose while the
+content that matters, scattered short tags, never reaches the index.
+
+Both are left this way deliberately. They are the clearest evidence in the corpus
+that a document can be "successfully" extracted and still be empty of its own
+meaning. **Set `OCR_PREFER_VISION=true` to read them properly** — that flag sends
+images straight to the vision model and skips this test entirely. Be aware it also
+routes every PDF to vision, which costs the selective-page demonstration in
+`mixed_manual_extract.pdf` and makes ingest much slower.
 
 ## Suggested run-sheet
 

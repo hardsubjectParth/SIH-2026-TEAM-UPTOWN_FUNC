@@ -44,8 +44,20 @@ PDF_SHAPE = {
     'sop_pump_changeover.pdf': None,
     'supplier_bulletin_2026_09.pdf': None,
     'incident_memo_u3_trip.pdf': None,
-    'scanned_inspection_report.pdf': ([1, 2], 2),
-    'mixed_manual_extract.pdf': ([3], 3),
+    'scanned_inspection_report.pdf': ([1, 2, 3], 3),
+    'mixed_manual_extract.pdf': ([4], 4),
+}
+
+# Every text document must run to more than one page: a single-page corpus reads as
+# a toy, and the multi-page case is also where the pagination bug lived -- filling
+# pages and spilling left a two-line final page under the 200-character floor, which
+# sent a perfectly good text layer to the vision model.
+MIN_PAGES = {
+    'sop_pump_changeover.pdf': 2,
+    'supplier_bulletin_2026_09.pdf': 2,
+    'incident_memo_u3_trip.pdf': 2,
+    'scanned_inspection_report.pdf': 3,
+    'mixed_manual_extract.pdf': 4,
 }
 
 
@@ -124,8 +136,12 @@ def main():
         routed_to_vision = RagService._ocr_is_unusable(tesseract)
         expects_vision = document['extraction_path'].startswith('vision')
         sample = tesseract.strip().replace('\n', ' ')[:38]
+        # State the route asserted, not a fixed claim: two documents in this corpus
+        # are recorded as staying on Tesseract, and printing "reaches the vision
+        # model" against them would make the verifier itself misleading.
+        route = 'reaches the vision model' if expects_vision else 'stays on Tesseract, as recorded'
         checks.check(routed_to_vision == expects_vision,
-                     f'{name}: reaches the vision model',
+                     f'{name}: {route}',
                      f'tesseract got {len(tesseract.strip())} chars: {sample!r}')
 
     print('\nPDF page structure')
@@ -139,6 +155,7 @@ def main():
             checks.check((scanned, count) == (want_pages, want_count),
                          f'{name}: scanned pages {want_pages} of {want_count}',
                          f'got {scanned} of {count}')
+        checks.check(count >= MIN_PAGES[name], f'{name}: at least {MIN_PAGES[name]} pages', f'has {count}')
 
     print('\nUpload scope resolves to the intended tier')
     for name, document in sorted(documents.items()):
