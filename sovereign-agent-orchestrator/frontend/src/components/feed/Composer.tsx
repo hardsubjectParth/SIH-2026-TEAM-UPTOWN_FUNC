@@ -60,11 +60,11 @@ function Composer({ onSubmit, submitting }: ComposerProps) {
             }
           }}
           placeholder="Instruct Sovereign Intelligence..."
-          className="chat-typing max-h-40 flex-1 resize-none bg-transparent py-1.5 text-base text-foreground outline-none placeholder:text-muted-foreground"
+          className="chat-typing composer-input max-h-40 flex-1 resize-none bg-transparent py-1.5 text-base text-foreground outline-none placeholder:text-muted-foreground"
         />
 
-        <label className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center text-muted-foreground focus-within:text-foreground focus-within:outline-2 focus-within:outline-accent hover:text-foreground" title="Attach files">
-          <span aria-hidden="true">+</span>
+        <label className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground transition-colors focus-within:text-foreground focus-within:outline-2 focus-within:outline-accent hover:bg-fill hover:text-foreground" title="Attach files">
+          <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
           <span className="sr-only">Attach files</span>
           <input ref={fileInputRef} type="file" multiple accept={SUPPORTED_UPLOAD_TYPES} className="sr-only" onChange={(event) => setFiles(Array.from(event.target.files ?? []))} />
         </label>
@@ -73,7 +73,7 @@ function Composer({ onSubmit, submitting }: ComposerProps) {
           type="submit"
           disabled={submitting || !task.trim()}
           aria-label={submitting ? 'Sending' : 'Send task'}
-          className="action-primary h-8 w-8 shrink-0 text-base"
+          className="action-primary size-9 shrink-0 text-lg"
         >
           <span aria-hidden="true">{submitting ? '…' : '↑'}</span>
         </button>
