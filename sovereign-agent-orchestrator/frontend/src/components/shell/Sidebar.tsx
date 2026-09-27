@@ -89,7 +89,21 @@ function Sidebar() {
 
       <div className="mt-auto hidden border-t border-rule p-4 md:block">
         <div className="flex items-center gap-3 rounded-2xl border border-accent/15 bg-fill p-3"><span className="flex size-8 shrink-0 items-center justify-center rounded-full border border-accent/25 bg-accent/10 font-mono text-xs text-accent">{rank.name[0]}</span><div className="min-w-0"><p className="truncate text-xs font-medium text-foreground">{rank.name}</p><p className="truncate text-[10px] text-muted-foreground">{rank.subtitle}</p></div></div>
-        <button type="button" onClick={signOut} className="mt-2 w-full px-1 py-2 text-left font-mono text-[10px] uppercase tracking-widest text-muted-foreground transition hover:text-foreground">Sign out <span aria-hidden="true">→</span></button>
+        {/* A real button, not a bare tracked-out mono label: it sat unenclosed under
+            the identity card with no border, fill or hover surface, so it read as a
+            caption rather than the control it is. Same pill language as the nav. */}
+        <button
+          type="button"
+          onClick={signOut}
+          className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-full border border-rule px-3 py-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-danger/35 hover:bg-fill hover:text-foreground"
+        >
+          <svg aria-hidden="true" width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M8.5 17H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.5" />
+            <path d="M13.5 13.5 17 10l-3.5-3.5" />
+            <path d="M17 10H8" />
+          </svg>
+          Sign out
+        </button>
       </div>
     </aside>
   )
