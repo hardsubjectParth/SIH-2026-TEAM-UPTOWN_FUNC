@@ -4,6 +4,7 @@ import { Navigate, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { useAuth } from '../context/AuthContext'
 import AppearanceControls from './shell/AppearanceControls'
+import BrandLogo from './shell/BrandLogo'
 
 function Login() {
   const { isLoggedIn, login } = useAuth()
@@ -33,7 +34,7 @@ function Login() {
   return (
     <main className="login-page flex min-h-screen flex-col text-foreground">
       <header className="flex items-center justify-between border-b border-rule px-6 py-5 sm:px-10">
-        <div className="flex items-center gap-3"><span aria-hidden="true" className="brand-mark flex size-9 items-center justify-center border border-accent/40 bg-[#36242a] font-mono font-semibold text-accent">S/</span><div><p className="text-[13px] font-semibold tracking-[0.01em]">SOVEREIGN</p><p className="font-mono text-[9px] uppercase tracking-[0.16em] text-muted-foreground">Operations / AI</p></div></div>
+        <BrandLogo className="w-[184px]" />
         <AppearanceControls />
       </header>
       <div className="mx-auto grid w-full max-w-[1240px] flex-1 items-center gap-12 px-6 py-12 sm:px-10 md:grid-cols-[minmax(0,1fr)_minmax(350px,0.9fr)] md:gap-10 lg:gap-20 lg:py-20">
