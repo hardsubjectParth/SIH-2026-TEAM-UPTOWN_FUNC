@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { useConversations } from '../../hooks/useConversations'
 import { RANK } from './rank'
+import BrandLogo from './BrandLogo'
 import { OverviewIcon, FeedIcon, KnowledgeIcon, TasksIcon, ArtifactsIcon } from './icons'
 import { createConversation } from '../../services/api'
 import type { Conversation, Role } from '../../types/api'
@@ -62,7 +63,7 @@ function Sidebar() {
   return (
     <aside className="sidebar-shell relative z-10 flex w-full shrink-0 flex-col border-b border-rule bg-[#111216]/90 backdrop-blur-xl md:h-dvh md:w-[244px] md:border-r md:border-b-0 lg:w-[256px]">
       <div className="flex items-center justify-between border-b border-rule px-5 py-4 md:px-5 md:py-7">
-        <div className="flex items-center gap-3"><span aria-hidden="true" className="brand-mark flex size-9 items-center justify-center border border-accent/40 bg-[#36242a] font-mono text-base font-semibold text-accent">S<span className="mb-3 text-[9px]">/</span></span><div><h1 className="text-[13px] font-semibold tracking-[0.01em] text-foreground">SOVEREIGN</h1><p className="font-mono text-[9px] uppercase tracking-[0.16em] text-muted-foreground">Operations / AI</p></div></div>
+        <h1 className="min-w-0 flex-1"><BrandLogo className="w-[164px] max-w-full" /></h1>
         <button type="button" onClick={signOut} className="rounded-full border border-rule-strong bg-fill px-3 py-1.5 text-[11px] text-muted-foreground hover:text-foreground md:hidden">Sign out</button>
       </div>
 

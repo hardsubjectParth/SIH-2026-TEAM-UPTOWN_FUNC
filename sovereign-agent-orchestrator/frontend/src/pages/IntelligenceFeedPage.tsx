@@ -15,6 +15,7 @@ import ApprovalGate from '../components/feed/ApprovalGate'
 import ArtifactCard from '../components/shared/ArtifactCard'
 import { STATUS_LABEL } from '../components/shared/StatusDot'
 import StatusDot from '../components/shared/StatusDot'
+import BrandLogo from '../components/shell/BrandLogo'
 
 function IntelligenceFeedPage() {
   const { id: routeId } = useParams<{ id: string }>()
@@ -101,7 +102,7 @@ function IntelligenceFeedPage() {
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-6 pb-10 sm:px-6">
         {historyMessages.length === 0 && !pendingTask ? (
           <div className="flex h-full flex-col items-center justify-center text-center">
-            <span aria-hidden="true" className="brand-mark flex size-11 items-center justify-center border border-accent/40 bg-[#36242a] font-mono text-lg font-semibold text-accent">S<span className="mb-3 text-[10px]">/</span></span>
+            <BrandLogo variant="mark" className="w-9" />
             <h3 className="mt-5 text-lg font-medium text-foreground">What can I help you with?</h3>
             <p className="mt-2 max-w-sm text-sm text-muted-foreground">Instruct Sovereign Intelligence to analyze documents, search authorized knowledge, or synthesize a deliverable.</p>
           </div>
