@@ -8,6 +8,12 @@ import { OverviewIcon, FeedIcon, KnowledgeIcon, TasksIcon, ArtifactsIcon } from 
 import { createConversation } from '../../services/api'
 import type { Conversation, Role } from '../../types/api'
 
+// Sessions were capped at 12 per group with no way to reach the rest: with 50
+// conversations most of the history was simply unreachable, and nothing on screen
+// said so. The cap stays (the list is a scroller, not a page) but it is now
+// expandable, and the count of what's hidden is visible.
+const SESSIONS_PER_GROUP = 10
+
 const NAV = (role: Role) => [
   { to: '/app', label: 'Overview', Icon: OverviewIcon, end: true },
   { to: '/app/feed', label: 'Intelligence Feed', Icon: FeedIcon, end: false },
@@ -35,6 +41,7 @@ function Sidebar() {
   const navigate = useNavigate()
   const { conversations, mutate } = useConversations()
   const [error, setError] = useState<string | null>(null)
+  const [showAllSessions, setShowAllSessions] = useState(false)
   const { today, previous7, older } = groupSessions(conversations)
   const rank = user ? RANK[user.role] : RANK.lower
 
@@ -59,6 +66,7 @@ function Sidebar() {
     ['Today', today], ['Previous 7 Days', previous7],
     ...(older.length ? [['Earlier', older] as [string, Conversation[]]] : []),
   ]
+  const hiddenSessions = showAllSessions ? 0 : sessionGroups.reduce((total, [, items]) => total + Math.max(0, items.length - SESSIONS_PER_GROUP), 0)
 
   return (
     <aside className="sidebar-shell relative z-10 flex w-full shrink-0 flex-col border-b border-rule bg-[#111216]/90 backdrop-blur-xl md:h-dvh md:w-[244px] md:border-r md:border-b-0 lg:w-[256px]">
@@ -82,8 +90,13 @@ function Sidebar() {
       </div>
       <div className="mt-3 hidden min-h-0 flex-1 overflow-y-auto px-4 md:block">
         {sessionGroups.map(([heading, items]) => items.length ? (
-          <div key={heading} className="mb-5"><p className="label-micro mb-2 px-2 text-[9px]">{heading}</p><div className="flex flex-col gap-0.5">{items.slice(0, 12).map((conversation) => <NavLink key={conversation.id} to={`/app/feed/${conversation.id}`} className={({ isActive }) => `block truncate rounded-full px-3 py-2 text-xs transition-colors ${isActive ? 'bg-fill-strong text-foreground' : 'text-muted-foreground hover:bg-fill hover:text-foreground'}`}>{conversation.title}</NavLink>)}</div></div>
+          <div key={heading} className="mb-5"><p className="label-micro mb-2 px-2 text-[9px]">{heading}</p><div className="flex flex-col gap-0.5">{items.slice(0, showAllSessions ? items.length : SESSIONS_PER_GROUP).map((conversation) => <NavLink key={conversation.id} to={`/app/feed/${conversation.id}`} className={({ isActive }) => `block truncate rounded-full px-3 py-2 text-xs transition-colors ${isActive ? 'bg-fill-strong text-foreground' : 'text-muted-foreground hover:bg-fill hover:text-foreground'}`}>{conversation.title}</NavLink>)}</div></div>
         ) : null)}
+        {hiddenSessions > 0 ? (
+          <button type="button" onClick={() => setShowAllSessions(true)} className="mb-4 w-full rounded-full border border-rule px-3 py-2 text-[11px] text-muted-foreground transition-colors hover:bg-fill hover:text-foreground">
+            Show {hiddenSessions} more session{hiddenSessions === 1 ? '' : 's'}
+          </button>
+        ) : null}
         {conversations.length === 0 ? <p className="px-2 text-xs text-muted-foreground">No sessions yet.</p> : null}
       </div>
 

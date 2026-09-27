@@ -24,7 +24,13 @@ export function useJob(jobId?: string | null) {
   const { data, error, mutate } = useSWR(
     token && jobId ? ['job', jobId, token] : null,
     ([, id, authToken]) => getJob(id, authToken),
-    { refreshInterval: (latest) => (latest && TERMINAL.includes(latest.status) ? 0 : 1200) },
+    // 1.2s spent roughly 50 of the 120 requests/minute the server allows per user
+    // (app/operations.py::RequestLimiter), and a single Feed tab already spends ~80 of
+    // them across its four pollers -- so opening a second tab, or the overview
+    // alongside, produced 429s that surface as "Some live workspace data could not be
+    // loaded". useJobEvents streams the same job over SSE, so this poll is a backstop
+    // for the final payload, not the liveness signal, and does not need to be that hot.
+    { refreshInterval: (latest) => (latest && TERMINAL.includes(latest.status) ? 0 : 3000) },
   )
   return { job: data, error, mutate }
 }

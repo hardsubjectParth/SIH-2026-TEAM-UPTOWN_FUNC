@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import ReactMarkdown from 'react-markdown'
@@ -6,7 +6,7 @@ import remarkGfm from 'remark-gfm'
 import { mutate as globalMutate } from 'swr'
 import { useAuth } from '../context/AuthContext'
 import { useConversation } from '../hooks/useConversations'
-import { useJob, useJobEvents } from '../hooks/useJob'
+import { useJob, useJobEvents, useJobs } from '../hooks/useJob'
 import { sendChatMessage, uploadFile } from '../services/api'
 import Composer from '../components/feed/Composer'
 import ActivityTimeline from '../components/feed/ActivityTimeline'
@@ -32,8 +32,24 @@ function IntelligenceFeedPage() {
   // with a manual "show earlier" expansion, which is enough to keep the DOM bounded.
   const [visibleCount, setVisibleCount] = useState(50)
 
-  const { job } = useJob(activeJobId)
-  const { events } = useJobEvents(activeJobId)
+  const { jobs } = useJobs(100)
+
+  // Restores fc84ea4, which the console redesign (281df2d) dropped when it rewrote
+  // this file. pendingTask lives in component state, so a reload -- or simply
+  // reopening an older conversation -- left the turn with no pipeline at all, which
+  // from the outside is indistinguishable from the run having vanished. There is no
+  // server-side pointer from a conversation to its current job, but GET /agent carries
+  // conversation_id on every job, so the conversation's most recent job is recoverable.
+  const resumableJobId = useMemo(() => {
+    if (!routeId) return null
+    const mine = jobs.filter((summary) => summary.conversation_id === routeId)
+    if (mine.length === 0) return null
+    return [...mine].sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')))[0].job_id
+  }, [jobs, routeId])
+
+  const trackedJobId = activeJobId ?? resumableJobId
+  const { job } = useJob(trackedJobId)
+  const { events } = useJobEvents(trackedJobId)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // Switching to a different (or no) conversation clears any in-flight turn from the
@@ -134,35 +150,42 @@ function IntelligenceFeedPage() {
               </motion.div>
             ))}
 
+            {/* The prompt bubble stays keyed to an in-page submission -- history already
+                renders the prompt and the answer for anything resumed, so repeating them
+                would double the turn on screen. The pipeline itself renders whenever
+                there is a job to show, resumed or live. */}
             {pendingTask ? (
-              <>
-                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ type: 'spring', stiffness: 300, damping: 30 }} className="ml-auto max-w-[85%] rounded-[22px] rounded-br-md border-hairline bg-accent/12 px-4 py-2.5 backdrop-blur-sm">
-                  <p className="text-sm text-foreground">{pendingTask}</p>
-                </motion.div>
+              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ type: 'spring', stiffness: 300, damping: 30 }} className="ml-auto max-w-[85%] rounded-[22px] rounded-br-md border-hairline bg-accent/12 px-4 py-2.5 backdrop-blur-sm">
+                <p className="text-sm text-foreground">{pendingTask}</p>
+              </motion.div>
+            ) : null}
 
-                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ type: 'spring', stiffness: 300, damping: 30, delay: 0.08 }} className="w-full">
-                  <div className="flex items-center gap-2">
-                    <StatusDot status={job?.status ?? 'queued'} />
-                    <span className="label-micro">{job ? STATUS_LABEL[job.status] : STATUS_LABEL.queued}</span>
+            {pendingTask || job ? (
+              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ type: 'spring', stiffness: 300, damping: 30, delay: 0.08 }} className="w-full">
+                <div className="flex items-center gap-2">
+                  <StatusDot status={job?.status ?? 'queued'} />
+                  <span className="label-micro">{job ? STATUS_LABEL[job.status] : STATUS_LABEL.queued}</span>
+                  {!pendingTask && job ? <span className="label-micro text-muted-foreground/70">· Last run</span> : null}
+                </div>
+
+                {/* Only for a turn submitted in this visit: a resumed job's answer is
+                    already above, rendered from conversation history. */}
+                {pendingTask && job?.final_answer ? (
+                  <div className="markdown mt-2"><ReactMarkdown remarkPlugins={[remarkGfm]}>{job.final_answer}</ReactMarkdown></div>
+                ) : job?.error ? (
+                  <p className="mt-2 text-sm text-danger">{job.error}</p>
+                ) : null}
+
+                {job ? <MetricsCard job={job} /> : null}
+                {events.length > 0 ? <ActivityTimeline events={events} /> : null}
+                {job?.status === 'awaiting_approval' ? <ApprovalGate job={job} onResolved={() => {}} /> : null}
+
+                {job?.artifacts?.length ? (
+                  <div className="mt-3 flex flex-col gap-1.5">
+                    {job.artifacts.map((artifact) => <ArtifactCard key={artifact.artifact_id} jobId={job.job_id} artifact={artifact} />)}
                   </div>
-
-                  {job?.final_answer ? (
-                    <div className="markdown mt-2"><ReactMarkdown remarkPlugins={[remarkGfm]}>{job.final_answer}</ReactMarkdown></div>
-                  ) : job?.error ? (
-                    <p className="mt-2 text-sm text-danger">{job.error}</p>
-                  ) : null}
-
-                  {job ? <MetricsCard job={job} /> : null}
-                  {events.length > 0 ? <ActivityTimeline events={events} /> : null}
-                  {job?.status === 'awaiting_approval' ? <ApprovalGate job={job} onResolved={() => {}} /> : null}
-
-                  {job?.artifacts?.length ? (
-                    <div className="mt-3 flex flex-col gap-1.5">
-                      {job.artifacts.map((artifact) => <ArtifactCard key={artifact.artifact_id} jobId={job.job_id} artifact={artifact} />)}
-                    </div>
-                  ) : null}
-                </motion.div>
-              </>
+                ) : null}
+              </motion.div>
             ) : null}
           </div>
         )}

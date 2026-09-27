@@ -85,6 +85,9 @@ export interface JobSummary {
   status: JobStatus
   created_at?: string
   task_type?: string
+  // GET /agent has always returned this; the type lost it in the console redesign,
+  // which is what stopped the feed recovering a conversation's most recent job.
+  conversation_id?: string
   model_id?: string
   model_name?: string
   artifacts: string[]
