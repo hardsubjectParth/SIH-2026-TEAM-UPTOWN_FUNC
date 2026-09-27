@@ -91,11 +91,20 @@ app.add_middleware(
     allow_headers=['Authorization', 'Content-Type'],
 )
 
+# Liveness and scrape endpoints are polled by the browser, container healthchecks and
+# Prometheus. Counting them against the request budget spends it on traffic that is not
+# user work -- and because the budget is keyed by client IP, on a single-workstation
+# deployment (every console tab arriving as 127.0.0.1) that budget is shared by the
+# whole installation rather than held per person.
+UNLIMITED_PATHS = frozenset({'/api/v1/health', '/api/v1/ready', '/metrics'})
+
+
 @app.middleware('http')
 async def operational_middleware(request, call_next):
     started = perf_counter()
     status = 500
-    if not svc.controls.limiter.allow(request.client.host if request.client else 'unknown'):
+    exempt = (request.url.path or '/') in UNLIMITED_PATHS
+    if not exempt and not svc.controls.limiter.allow(request.client.host if request.client else 'unknown'):
         status = 429
         from fastapi.responses import JSONResponse
         response = JSONResponse({'detail': 'RATE_LIMIT_EXCEEDED'}, status_code=status)

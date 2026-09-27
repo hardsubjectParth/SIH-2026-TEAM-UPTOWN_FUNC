@@ -17,6 +17,8 @@ import { STATUS_LABEL } from '../components/shared/StatusDot'
 import StatusDot from '../components/shared/StatusDot'
 import BrandLogo from '../components/shell/BrandLogo'
 
+const TERMINAL_STATUSES = ['done', 'failed', 'cancelled']
+
 function IntelligenceFeedPage() {
   const { id: routeId } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -52,9 +54,10 @@ function IntelligenceFeedPage() {
   const { events } = useJobEvents(trackedJobId)
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // Switching to a different (or no) conversation clears any in-flight turn from the
-  // previous one -- there's no server-side pointer from a conversation to its "current"
-  // job, so a live panel only ever represents a turn started in this page visit.
+  // App.tsx keys <Routes> by location.pathname, so sending from /app/feed
+  // remounts this page when it navigates to the new conversation -- component state and
+  // refs are both discarded. Nothing in here can carry a turn across that, which is why
+  // liveness below is derived from the job's own status rather than from pendingTask.
   useEffect(() => {
     setActiveJobId(null)
     setPendingTask(null)
@@ -108,6 +111,10 @@ function IntelligenceFeedPage() {
   const allHistoryMessages = hideTrailingUser ? messages.slice(0, -1) : messages
   const hiddenCount = Math.max(0, allHistoryMessages.length - visibleCount)
   const historyMessages = hiddenCount > 0 ? allHistoryMessages.slice(-visibleCount) : allHistoryMessages
+
+  // A run still moving through the pipeline is the current turn, whether or not this
+  // page instance was the one that submitted it.
+  const isLive = Boolean(pendingTask) || Boolean(job && !TERMINAL_STATUSES.includes(job.status))
 
   return (
     <div className="app-page flex min-h-0 flex-1 flex-col">
@@ -165,12 +172,12 @@ function IntelligenceFeedPage() {
                 <div className="flex items-center gap-2">
                   <StatusDot status={job?.status ?? 'queued'} />
                   <span className="label-micro">{job ? STATUS_LABEL[job.status] : STATUS_LABEL.queued}</span>
-                  {!pendingTask && job ? <span className="label-micro text-muted-foreground/70">· Last run</span> : null}
+                  {job && !isLive ? <span className="label-micro text-muted-foreground/70">· Last run</span> : null}
                 </div>
 
                 {/* Only for a turn submitted in this visit: a resumed job's answer is
                     already above, rendered from conversation history. */}
-                {pendingTask && job?.final_answer ? (
+                {isLive && job?.final_answer ? (
                   <div className="markdown mt-2"><ReactMarkdown remarkPlugins={[remarkGfm]}>{job.final_answer}</ReactMarkdown></div>
                 ) : job?.error ? (
                   <p className="mt-2 text-sm text-danger">{job.error}</p>
