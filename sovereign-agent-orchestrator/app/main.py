@@ -96,7 +96,7 @@ app.add_middleware(
 # user work -- and because the budget is keyed by client IP, on a single-workstation
 # deployment (every console tab arriving as 127.0.0.1) that budget is shared by the
 # whole installation rather than held per person.
-UNLIMITED_PATHS = frozenset({'/api/v1/health', '/api/v1/ready', '/metrics'})
+UNLIMITED_PATHS = frozenset({'/api/v1/health', '/api/v1/ready', '/api/v1/metrics'})
 
 
 @app.middleware('http')

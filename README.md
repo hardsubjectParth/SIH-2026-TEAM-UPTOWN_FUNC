@@ -1,6 +1,6 @@
 # UPTOWN_FUNC
 
-## Smart India Hackathon 2026 — Problem Statement #117
+## Smart India Hackathon 2026 — Problem Statement #26117
 
 ### Sovereign On-Premise Agentic AI Workbench using Open-Weight Multimodal LLMs for Confidential Industrial Work
 
@@ -1126,7 +1126,7 @@ The platform can be extended with:
 |                       |                                                      |
 | --------------------- | ---------------------------------------------------- |
 | **Event**             | Smart India Hackathon 2026                           |
-| **Problem Statement** | #117                                                 |
+| **Problem Statement** | #26117                                                 |
 | **Organization**      | Mangalore Refinery and Petrochemicals Limited (MRPL) |
 | **Theme**             | Smart Automation                                     |
 | **Team**              | UPTOWN_FUNC                                          |
@@ -1156,4 +1156,4 @@ Add the applicable license here if this project is intended for public distribut
 
 ---
 
-**UPTOWN_FUNC · Smart India Hackathon 2026 · Problem Statement #117**
+**UPTOWN_FUNC · Smart India Hackathon 2026 · Problem Statement #26117**

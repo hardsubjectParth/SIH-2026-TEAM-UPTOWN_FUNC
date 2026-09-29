@@ -314,7 +314,7 @@ set -a; . ./.env; set +a
 | `TOOL_TIMEOUT_SECONDS` | `30` | Tool timeout |
 | `MAX_UPLOAD_BYTES` | `52428800` | Per-upload size cap |
 | `USER_STORAGE_QUOTA_BYTES` | `5368709120` | Per-user storage quota |
-| `RATE_LIMIT_PER_MINUTE` | `120` | Per-identity request rate limit |
+| `RATE_LIMIT_PER_MINUTE` | `600` | Request rate limit, counted **per client IP**, not per identity. Health, readiness and metrics are exempt. A console tab polls several endpoints at once, so on a single-workstation deployment every tab shares one budget |
 | `MALWARE_SCAN_REQUIRED` | `false` | Hard gate: `true` without `CLAMAV_HOST` fails every upload |
 | `RUN_WORKER` | `true` | Whether the API process also runs the job worker |
 | `API_HOST` / `API_PORT` | `0.0.0.0` / `8080` | Bind address and port |
